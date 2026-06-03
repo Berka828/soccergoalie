@@ -71,17 +71,20 @@
 </head>
 <body>
     <div id="game-container">
-        <video id="webcam" autoplay playsinline muted></video>
+        <video id="webcam"></video>
         <canvas id="gameCanvas"></canvas>
+
         <div id="loading-screen">
             <h2>Loading Camera...</h2>
             <p>Please grant camera permissions when prompted.</p>
         </div>
+
         <div id="ui-overlay">
             <div class="ui-box">SCORE: <span id="score">0</span></div>
             <div id="timer-box" class="ui-box">TIME: <span id="time">120</span></div>
             <div class="ui-box">STREAK: <span id="streak">0</span></div>
         </div>
+
         <div id="game-over-screen">
             <h1>Game Over</h1>
             <p>Final Score: <span id="final-score">0</span></p>
@@ -111,9 +114,8 @@
 
     let state = {
         score: 0, streak: 0, bestStreak: 0, timeLeft: 120,
-        gameStatus: 'loading', // loading, playing, over
+        gameStatus: 'loading',
         contactPoints: {},
-        particles: [],
         playerCutout: null,
         gameTimer: null
     };
@@ -122,19 +124,35 @@
     bgImg.src = 'soccerfifabg.png';
 
     const ballImg = new Image();
-    ballImg.src = 'data:image/png;base64,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';
+    ballImg.src = 'data:image/png;base64,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';
 
-    let ball = {
-        x: 0, y: 0, radius: 15, speedX: 0, speedY: 4,
-        sizeGrowth: 0.1, active: false, rotation: 0
-    };
+    let ball = {};
 
     function gameLoop() {
-        if (state.gameStatus === 'playing') {
-            updateGame();
-        }
+        if (state.gameStatus === 'playing') updateGame();
         drawGame();
         requestAnimationFrame(gameLoop);
+    }
+
+    function initGame() {
+        resizeCanvases();
+        ui.playAgainBtn.addEventListener('click', startGame);
+
+        const pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
+        pose.setOptions({
+            modelComplexity: 1, smoothLandmarks: true, enableSegmentation: true,
+            smoothSegmentation: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5
+        });
+        pose.onResults(onResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => await pose.send({ image: videoElement }),
+            width: 1280, height: 720
+        });
+        camera.start();
+
+        startGame();
+        gameLoop();
     }
 
     function startGame() {
@@ -169,7 +187,7 @@
     function spawnBall() {
         if (state.gameStatus !== 'playing') return;
         ball = {
-            active: true, radius: 5,
+            active: true, state: 'incoming', radius: 5,
             x: canvasElement.width / 2 + (Math.random() - 0.5) * 300,
             y: canvasElement.height * 0.65,
             speedX: (Math.random() - 0.5) * 10,
@@ -180,11 +198,12 @@
 
     function updateGame() {
         if (!ball.active && state.gameStatus === 'playing') {
-            setTimeout(spawnBall, 1200);
+            setTimeout(spawnBall, 1500);
             ball.active = 'spawning';
         }
+        if (ball.active !== true) return;
 
-        if (ball.active === true) {
+        if (ball.state === 'incoming') {
             ball.x += ball.speedX;
             ball.y += ball.speedY;
             ball.radius += ball.sizeGrowth * ball.speedY;
@@ -193,9 +212,12 @@
             let saved = false;
             for (const part in state.contactPoints) {
                 const point = state.contactPoints[part];
-                if (point?.x && Math.hypot(ball.x - point.x, ball.y - point.y) < ball.radius + 35) {
+                if (point?.x && Math.hypot(ball.x - point.x, ball.y - point.y) < ball.radius + 40) {
                     saved = true;
-                    triggerFx("#4caf50", point.x, point.y);
+                    // Deflection Physics
+                    ball.state = 'deflected';
+                    ball.speedY *= -0.6; // Reverse Y direction and lose some energy
+                    ball.speedX += (ball.x - point.x) * 0.2; // Nudge based on contact point
                     break;
                 }
             }
@@ -204,25 +226,32 @@
                 state.score += 10 + (state.streak * 2);
                 state.streak++;
                 if (state.streak > state.bestStreak) state.bestStreak = state.streak;
-                ball.active = false;
             } else if (ball.y > canvasElement.height + ball.radius) {
                 state.streak = 0;
                 triggerFx("#f44336");
                 ball.active = false;
             }
-            updateUI();
+        } else if (ball.state === 'deflected') {
+            ball.x += ball.speedX;
+            ball.y += ball.speedY;
+            ball.radius -= ball.sizeGrowth * Math.abs(ball.speedY) * 2; // Shrink faster
+            if (ball.radius < 1 || ball.y < 0) ball.active = false;
         }
-
-        state.particles.forEach((p, i) => {
-            p.x += p.vx; p.y += p.vy; p.alpha -= 0.03;
-            if (p.alpha <= 0) state.particles.splice(i, 1);
-        });
+        updateUI();
     }
 
     function drawGame() {
         canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
         if (bgImg.complete) canvasCtx.drawImage(bgImg, 0, 0, canvasElement.width, canvasElement.height);
-        if (state.playerCutout) canvasCtx.drawImage(state.playerCutout, 0, 0, canvasElement.width, canvasElement.height);
+        
+        // Draw the mirrored player cutout
+        if (state.playerCutout) {
+            canvasCtx.save();
+            canvasCtx.scale(-1, 1);
+            canvasCtx.translate(-canvasElement.width, 0);
+            canvasCtx.drawImage(state.playerCutout, 0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.restore();
+        }
         
         if (ball.active === true) {
             canvasCtx.save();
@@ -231,21 +260,13 @@
             canvasCtx.drawImage(ballImg, -ball.radius, -ball.radius, ball.radius * 2, ball.radius * 2);
             canvasCtx.restore();
         }
-
-        state.particles.forEach(p => {
-            canvasCtx.save();
-            canvasCtx.globalAlpha = p.alpha;
-            canvasCtx.fillStyle = p.color;
-            canvasCtx.beginPath();
-            canvasCtx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-            canvasCtx.fill();
-            canvasCtx.restore();
-        });
     }
 
     function onResults(results) {
-        if (state.gameStatus === 'loading') ui.loading.style.display = 'none';
-
+        if (state.gameStatus === 'loading') {
+            ui.loading.style.display = 'none';
+        }
+        
         const w = canvasElement.width, h = canvasElement.height;
         offscreenCanvas.width = w; offscreenCanvas.height = h;
         offscreenCtx.clearRect(0, 0, w, h);
@@ -254,60 +275,41 @@
             offscreenCtx.drawImage(results.segmentationMask, 0, 0, w, h);
             offscreenCtx.globalCompositeOperation = 'source-in';
         }
-        
-        offscreenCtx.scale(-1, 1);
-        offscreenCtx.translate(-w, 0);
         offscreenCtx.drawImage(results.image, 0, 0, w, h);
         state.playerCutout = offscreenCanvas;
 
         if (results.poseLandmarks) {
-            const getCoords = (index) => ({ x: (1 - results.poseLandmarks[index].x) * w, y: results.poseLandmarks[index].y * h });
+            // We DON'T invert the X-coordinate here.
+            // The drawing is now handled correctly by flipping the whole canvas,
+            // so the collision logic should use the original, un-mirrored coordinates.
+            const getCoords = (index) => ({ x: results.poseLandmarks[index].x * w, y: results.poseLandmarks[index].y * h });
             state.contactPoints = {
-                left_wrist: getCoords(15), right_wrist: getCoords(16), left_elbow: getCoords(13), 
-                right_elbow: getCoords(14), left_shoulder: getCoords(11), right_shoulder: getCoords(12),
+                left_wrist: getCoords(15), right_wrist: getCoords(16),
+                left_elbow: getCoords(13), right_elbow: getCoords(14),
+                left_shoulder: getCoords(11), right_shoulder: getCoords(12),
                 head: getCoords(0), left_knee: getCoords(25), right_knee: getCoords(26)
             };
         }
     }
 
-    function triggerFx(color, x, y) {
-        if (x && y) {
-            for (let i = 0; i < 25; i++) {
-                state.particles.push({
-                    x, y, vx: (Math.random() - 0.5) * 12, vy: (Math.random() - 0.5) * 12,
-                    size: Math.random() * 6 + 3, color, alpha: 1
-                });
-            }
-        } else {
-            document.getElementById('game-container').style.outline = `8px solid ${color}`;
-            setTimeout(() => document.getElementById('game-container').style.outline = 'none', 200);
-        }
+    function triggerFx(color) {
+        document.getElementById('game-container').style.outline = `8px solid ${color}`;
+        setTimeout(() => document.getElementById('game-container').style.outline = 'none', 200);
     }
-
+    
     function updateUI() {
         ui.score.innerText = state.score;
         ui.streak.innerText = state.streak;
     }
 
+    function resizeCanvases() {
+        canvasElement.width = 1280; canvasElement.height = 720;
+    }
+
     // --- Initialization ---
     (() => {
-        ui.playAgainBtn.addEventListener('click', startGame);
-        
-        const pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
-        pose.setOptions({
-            modelComplexity: 1, smoothLandmarks: true, enableSegmentation: true,
-            smoothSegmentation: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5
-        });
-        pose.onResults(onResults);
-
-        const camera = new Camera(videoElement, {
-            onFrame: async () => await pose.send({ image: videoElement }),
-            width: 1280, height: 720
-        });
-        camera.start();
-
-        startGame();
-        gameLoop();
+        resizeCanvases();
+        initGame();
     })();
 </script>
 </body>
