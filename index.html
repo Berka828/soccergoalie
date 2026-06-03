@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Advanced Webcam Goalkeeper Game</title>
+    <title>Pro Webcam Goalkeeper</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
     <style>
@@ -20,27 +20,23 @@
         }
         #game-container {
             position: relative;
-            width: 1280px; /* Increased width for a wider feel */
+            width: 1280px;
             height: 720px;
             border-radius: 12px;
             overflow: hidden;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.5);
-            background: url('soccerfifabg.png') no-repeat center center; /* <-- NEW BACKGROUND IMAGE HERE */
-            background-size: cover;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.8);
+            background-color: #000;
         }
-        video, canvas {
+        /* Hide the raw video feed, we will draw the cut-out player on the canvas */
+        video {
+            display: none; 
+        }
+        canvas {
             position: absolute;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
-            transform: scaleX(-1);
-        }
-        video {
-            object-fit: cover;
-            opacity: 0.5; /* Default opacity */
-        }
-        canvas {
             z-index: 2;
         }
         #ui-overlay {
@@ -49,65 +45,76 @@
             left: 0;
             right: 0;
             display: flex;
-            justify-content: space-around; /* Space out elements evenly */
+            justify-content: space-around;
             padding: 0 40px;
             z-index: 10;
             pointer-events: none;
         }
         .ui-box {
-            background: rgba(0, 0, 0, 0.7);
+            background: rgba(0, 0, 0, 0.75);
             backdrop-filter: blur(8px);
-            padding: 12px 25px;
-            border-radius: 10px;
-            color: white;
-            font-weight: bold;
-            font-size: 1.5rem; /* Larger font */
+            padding: 12px 30px;
+            border-radius: 12px;
+            color: #fff;
+            font-weight: 800;
+            font-size: 1.6rem;
             border-bottom: 4px solid rgba(255,255,255,0.2);
-            text-shadow: 1px 1px 3px rgba(0,0,0,0.5);
+            text-shadow: 1px 1px 3px rgba(0,0,0,0.8);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
         }
+        #score { color: #4caf50; }
+        #streak { color: #ffeb3b; }
+        #goals { color: #f44336; }
+        
         #settings-panel {
             position: absolute;
             bottom: 20px;
             left: 20px;
-            background: rgba(0, 0, 0, 0.7);
+            background: rgba(0, 0, 0, 0.8);
             backdrop-filter: blur(8px);
-            padding: 15px;
-            border-radius: 10px;
+            padding: 15px 20px;
+            border-radius: 12px;
             z-index: 11;
             color: white;
+            border: 1px solid rgba(255,255,255,0.1);
         }
         .slider-container {
-            margin-top: 10px;
+            margin-top: 12px;
             display: flex;
             flex-direction: column;
         }
         .slider-container label {
             font-size: 0.9rem;
-            margin-bottom: 5px;
+            margin-bottom: 6px;
+            font-weight: bold;
+        }
+        input[type=range] {
+            accent-color: #4caf50;
         }
     </style>
 </head>
 <body>
 
     <div id="game-container">
-        <video id="webcam" autoplay playsinline></video>
+        <!-- Added muted and playsinline for better browser compatibility -->
+        <video id="webcam" autoplay playsinline muted></video>
         <canvas id="gameCanvas"></canvas>
 
         <div id="ui-overlay">
             <div id="score-box" class="ui-box">SCORE: <span id="score">0</span></div>
             <div id="streak-box" class="ui-box">STREAK: <span id="streak">0</span></div>
-            <div id="goals-box" class="ui-box">GOALS: <span id="goals">0</span></div>
+            <div id="goals-box" class="ui-box">MISSED: <span id="goals">0</span></div>
         </div>
 
         <div id="settings-panel">
-            <strong>Settings</strong>
+            <strong style="font-size: 1.1rem;">Game Settings</strong>
             <div class="slider-container">
                 <label for="ballSpeed">Ball Speed</label>
-                <input type="range" id="ballSpeed" min="1" max="10" value="5">
+                <input type="range" id="ballSpeed" min="1" max="12" value="5">
             </div>
             <div class="slider-container">
-                <label for="cameraOpacity">Your Visibility</label>
-                <input type="range" id="cameraOpacity" min="0" max="1" step="0.1" value="0.5">
+                <label for="cameraOpacity">Player Opacity</label>
+                <input type="range" id="cameraOpacity" min="0" max="1" step="0.1" value="1.0">
             </div>
         </div>
     </div>
@@ -116,6 +123,10 @@
 const videoElement = document.getElementById('webcam');
 const canvasElement = document.getElementById('gameCanvas');
 const canvasCtx = canvasElement.getContext('2d');
+
+// We use an offscreen canvas to cleanly cut out the player
+const offscreenCanvas = document.createElement('canvas');
+const offscreenCtx = offscreenCanvas.getContext('2d');
 
 const scoreEl = document.getElementById('score');
 const streakEl = document.getElementById('streak');
@@ -131,45 +142,50 @@ let contactPoints = {};
 const particles = [];
 let gameConfig = {
     ballBaseSpeed: 5,
-    cameraOpacity: 0.5
+    cameraOpacity: 1.0 // Default to fully visible now that background is removed
 };
 
+// Setup Background Image
+const bgImg = new Image();
+bgImg.src = 'soccerfifabg.png';
+
+// Setup Reliable SVG Soccer Ball
 const ballImg = new Image();
-ballImg.src = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAARb0lEQVR4AbWXC3BU1RnH/zuzL7s32Teb3EwICSEQEgaCEJ4eChpBqqgVq1Xq2NXGfsZpZ5y11nq0tVprx1E7tVprx1prR6u1jvVpKa1SoIgIBAEnISEhEIIQ2SSS3M1m997M7N/ZfSQzmQ0hISD/n5nJZvfe+53vfOdz/ucY/pEaSC9QBI8BvW949vM39P2hB3Q5A/1T/xL9Rk3gBqg4LOBW/QvR5+pB+T9v6/N1wD/4tYABfD1vHn/Mv7R+WfRk9YEOd0DTsAIwA23DqsjX95b/u132CjR2RucPQA1A/QADQAEcACpQ/bMv9X2c3cK2u0Q2QEOQ86iAm4VVoT7A+cQ1fD3D9SgX5O2tD5zG64F+gAagA3gAIFC1sS/287w7mJg9QNOQ86yAGwXVoL7D2Zg1fj/03+h+tQHtvefLgX6AhqADqAAUKFm5F/s53F3MDLbgOYgF1sBNwqagPsLZ2PV+F+rfwD6vechcW//c2gA3YEGQIHbQBXQ8cKqHn8m8u947v59MKN7gOYgF1oBNwqagDsL52PV+P80n0C9n/cA+V0AjaEBDMB+oAro0EaF69/u4T3u3/dJdGYHzkPMsgJuFLQRdxfOxKrxf6b5BOz3tgeA/A6ANjQAB2A7qAI69FSh+vc7eA/3v8YQ6MyOnIfYZQXcKGgj7i6ciVXj/5f6BNgPaA+A/A6ANjQAB2A7qAI6dFOh+vc7eA/3Xy/Rmb0BOQ9xywq4UdBG3F04E6vG/y/1CeT3tgeA/A6ANjQAB2A7qAI6NFGh+vc7eA/356xEZ/YGLGCRlXAjwN4+xM8V8sM/6P/uB/T7gH6gB9AAGgADcAC4AVSgehX/Vj8Pd8cTqL2sYAmr4Fbg23sLfH+p7z/0/2oA9Psh6H+g/wAagAagB6A+oP5v/hX+4e+qHwG1D2sLlrAKbg3euiP4Hw0B9Aeg/+kPgf6f+AdoAD2AAGCA+l+W/3h2L53e6B6wgEUsgVsD/L4R/P+gAegPaA8A9H/yH2AAPYAGYAAwgPr/xT+e3Utndy/WAqVYArcB+PZG8f9dAKD/23+g/tMDoP6TA+gPNAD9AxlA/f8k/9H1rZ0tnd29WAtkYA3cFuDbn0Lw/12g/pMfAP1//Af9T3yAHkAPoAeo/+X/g+tbO7t1M6sFMrECbgvw7U+h+P8A9P8eB/2/+g/0P/IBegA9gB5A/c/8X17f2tmtm1ktkEGVcFuA3/4UIj9A/ycf9P/pP9D/xAfwAfQAPYAeoP6X/35c39rZrdtZLVBAldgtwG/wCRF/QP8n36D/6T/Q/8QH8AH0AD2AHkD9L/79uL61s1unswZYoAp7gPwC/AY/kfAH8AekH9D/hQfgP+ED+AA+gA+g/+l/yOvtnW6dzhpgQdXYI8Av8CMknAH8AemH/H9xAPxP/AA+gA/gA+j/wn+Q1zffuvU6a4AJVGHvAH+B3yDhCeA/pP2Q/+8OCP/kB/AhfIAvgA/QPxT+4+3N9269zhpgghVYI8CP+DcITwD+Q9oP+f/iAPif+AF8CB/gC+AD9A9l/7j55rO3f+eNAUyggjUE+A3/hsBbwAdo/yAAn8Uf4EP4AF8AH6D/KPvHzTe/vf07bwxgggprBPhN/wYBbwEfoP2DAHyWP4AP4QP4AvhA+1B9YfONN94+q3UDAE6ggxoC/Ea/IfA28AHaPwzAc/kD+BA+gC+AD9B+VB9c23jiLWePahmAExhAYcAv9BsCbwMfoP2DAVz4E/wIPgQfgA8g/4Hsh3ePNz655WJtAECBCAz8H/oNgbcB/kD7hwE4/x/xA/gQfgA+QP4z2Q/vHm98ctPZmgEAJVBAgH/QbxDYBfgD7R8G4Nxf4gf4ED4AHyD/mewHdx83Pvz2RjM1AECBCBTgF/oNgV0C/kf7h/0Avud/wA/wIfgA+Q9j/+D+48YHtz2vSQcAlEABAv5L/wbBLgH/o/2D/gD+8z/AD/Ah+AB88N+P/f3dx40PPn5Tkw4AKIEKBPzb/gaBXYL/o/2DfgD/6z/AD/Ah+AB8+J+O/e3ex413PntBkwwAKIGCBPw/+xsEOgT/R/v3Bvzf/A/wA3wIPgAfvi/o/+7ex413PvtBkw4AKIGiBPzD/k6BHwL/o/37A/5v/gd+gB/Bh+DDV6P/B+593LjrwfNNKgGgBKok4B/y7xLoEPwf7d8b8F/8B/gBfogw+BB+jP4P3Pu4cdeD55tUAkAJVE3AP8K/LdAheL/S/i8A/1P/Az/ADxGGH8KP0f+Ddx4yvv728yYVAVCCqgn4D/m3C/pG8H6l/V8A/j//B36AHyIMzY/p/4N3HjK+vj9wYhUAUIKqCfin/NuFvkHwf6X9/wb8X/+BH+CHCEPbM/o/eOeR8vX3D0+mCgBQgtUH/EN+LdI3gv0v7f834P/oD/AD/BFhaH5M/wPfeax8/b0Dk6kCAJSw+gL+Eb/W6BvB/pX2fx/gf+ID/IAfEQa3Z/Q/8J3Hyld8+5JJVACAElyQgF/wawm/QfJ/pe1/H+DP+AE+4EeEIe3Z/A/857HyFd8+MUkFAJTAgpTAi/8ag28Q+V/a/38D/rMf4AP8EGFofkb/A791rHxltxcmUwEApbBQAlfh2x78hpH+l/b/34Df+AF+gB8iDMnN5r/Aax4tX9nl9klUAKAChZJAhV/N4zeN7m+0//96gJ/jB/gBfogwPDeb/wLveLR8xTevSaICAFSQggkswrP9+I0m8H9o//91Az/HD/AD/CFBmN5k/gO84+FydbcXJlMBACpIYAL/xQ/gN5rA/6H9/+8M/Bw/wA/whwRhOZv5D/COh8vV3V6QTAUAVCCBG/CP3yDybyzB/6L9/3cGfo4f4If4QYIQn81k/gM87+Hy9bcvSaYCAFyABG7Av/4CyP+FBP2X9v/fGPg5foAf4g8JhvxM5r/A8x4ur9++IpMKALhACRbgL78A8n8hgb/S/v+bA7/HD/AD/CFhmJ/J/Ac43cPl616eSJQCALhACTfg//UCgP8Pgb/S/v+bA7/HD/AD/CHBeD6b+Q8wusfL1z0xSYUALkACTOC//AKY/xMB/0X7/w+D/xI/wA/xhwQD/wLme4hpfj6f+Y+m/+v2V/L/2eM/T6b3AJxABQ4T+D+hHwD/LwT+S/v/D4N/6Qf4Ib6PYOAfIP9LhH/L+P8A2D+4+NXt7x7f83+t8G5vQhXAATiBCgy+AP8+xM+T//d4n/8B+t//gR/hj/f/i/+/5P+X+P9v8H/k/48ef/P+VwO+60+pBDgAD3AAfP/x+/b8n3L+b3X/f/mX4v8rL//f+v9T/P+R/n+G/+P9D/3P0n9e8d1/SgLgATyA+PfjH+3Hfxnj/3f+D3H+D3L+/zn/f4T/3+X/b/n/n/x/6r+d/D+293n0P3q/8V9KAuABPIB48+sD+jP+sRr/1w/+Sxr/L7f/H+b/e/8/y/+X+f9X/l/g/1v/h/b3eew/b3/t9pASAB7AA4g3vz6gP+Mfq/F/zeAfafy/4f+3+X+v+wPy/2H+//7/C/9/if+f8f8P7X0e/Q+fV+10kgJwAA+ABxDvfn1A/yG+L8b/p4n/U/J/+n6X9v/2+u+Q/d/9/3/8//f7P/5/yv+H9uI+/B9a3dJJCuABOAAxLufH+BPxf5G4j+N/7/Y/2f+z8j/P/L/t/0/JP+//f+H7f0e+p+6vqnLScIgABwAD3AA8e7nB/iTcH8h9p/P+T/R+/4/+X+k/d/6/4f24j78/6O6lEQABYAD6AEOIN79/AD/ZtzfCvtPg/+T1r/R+z/n/6Puvy7v+/L/X+L/D81rP9t9y80HMAAOwCH0AEdQ/3x+gP+L9hfCv8H/pPbf6P0D/3/U/dflvS/4/w//X5j+T94w/t3tB9MAHAAGYAh9ABPUP98f4P8G7S+EfwP/Setv9P5B8h/3/wX/f4j/L03/J2+Y/n7v8kRUAACYAAbQAhxAfRv8AP/G2B+Q/xP1vyX0b/Z/zP9X3H+V97v+/1P8f2/6P2/5/X2rM1MFADABDLACHOA11L8A/z7A+A/q/w7qfw79nwH+v8j+v+b+X3H/Vd7v+v9P8f+96f/e5/fP3/yYKgDAADSACeAALqF9gJ/A3x8E7v9E/P/F/B+j/xvS/43sf2b+L7n/Ku93/f+H+P9e8z+u/J/n/8n/7v4P//P97/x/qP83qX/x8kZ2dgoAQCgawAX4D/gL3E+tPqD2E/j/lfyfkv43sv+Z+S9z/1XW7/z/L/H/veZ/XPlP4/8v+P8v4/+34f8D+T8t//f+v9z/5+b/uM8/1vLz9W+k1gAAoA3NAhQABvj1Lh8Y3P6D+j8t/yvk/wr5PyX/byT/s/B/S/5v+v+b/J/l/3v8/w3//5n9P8D//+D/D/j/g/p/pP8D/n8v/f+D/R85P97vF54e83l9C6n1gAAQAOaBTh4YPAhQEDgvQ/g/17Bf0v8nyL7L/r/ovxf8n9J/m+5/9v0/zb5v8b/b/j/Ff8/M/sf4/8f8v97/P8D/n+s/9/i/7/U/+fufxL6XwL9HwP/h54f83n9C6n1ggAAjIEG8EADuN/x+T//xT2A/8Wj7/6fEv+vlf9X8v+K/F+Q/4v8X/T/Lfxfkv+bzv+27P9W+b9G/q/xfxX/H5r/j8H/2/L/3+T/v/v/X/p/bv//uv/f5f8b9n/lP+x8i+5/HvxPhP8T1/+h+xPVPxn9Z5zP6T31/gX/Z6tH638M+09a/4y8+Pj22xsnUjMAAKAJvIAGkIGu4J2Hjf/sHkAH8K/lT/V/4uivxf+3yP+r+f9H/K+K//WJ/D9y/y+S/0v8X9L/m/a/Lfxfkv+bTv+27P9W+b9G/q/xX5X/G5v/G5f/6+H/tcj/9fn/lvyv+f5L/S/xvwj9J97/lP0fOP/D0H+T+T8V/z/T/b/K/+cI/p+6/wndf/79T6J/0P0zjv1l3Y+b1+q8b0b/6f6T1v9L/v+Z83P4D1a/mP5vJv9x8423X7qYmAEAAG0gA3wAHeAq7j+Qf+b+Y3kAPYD/2v9J/38R/a+e/FcK/ysD/yvxv0L+rxD/K4L/5Zn8v5z/S/xf0v+b9r8t/F+S/5tO3/bKvyX93yb/V8z/qvJfS/+Xkv/l+H8Z/i9F/yvi/wL8rwj9V0b/pff9V+5/VvtPfz4R/z/y/xf+X4r+U9d/SvtP95/tPmv3o3qftvsF3rfgv7f363yfdv2r9X9h+U+j/4T6H9D9n/L++8//f/S/xf+X8z/0/Nf8//P5wOaPtx5anpkBABoAHTwBDdCBruK+Y/kH9x7PAbgC/6+xP8J/2eBPyf6v8n9N/a+J/ysq/yvQvyrzX8T5q9x/tfev9H7L/N9S/yeOf0v3X+r7r9a+L/p8i/5D6f5u1K9i/ZLoH9z31dn/Mu/fVv+H9H8o/2fs/s76J+7/6e7Psv+0/efOv/f8Wef/58n/9+r/J+n/bPtX2/2z96/c/e32D9+/c/e3fH+K+s/wfeL7X/P9l/u+OfsX5P8u9l/L/l3M/x3tf678T5v+x8u3P//r4eUPLFwYn4gBAABcQA1YAC7An/3/w1wH4gBcAX6q9p81/q3hv0f2X+z5i+5f7P1Xev9t4z+c/7PHd0z+I8R/tPpX7H598F/S+Uex/1nsv8z+L+T/kv1Prf+z+n/C+g+o/4P3n3P/x/v/Nf/fwf63+H8f+1/v/2v2/+P8v4/8L+P/6/z/Pfq/Y/b36/0H79+5+9vtH7R/4/Y3uH/D+jfaPsP695V9Y/gWxH4D/Jey/lf072X9j9r/R/t/IflvNf/L23/M/f8d/j9x/zN2/+N7H/4v4323/G9r/3vy/wT97xf/85J/cffz8u23pWcSAACgDdyABtCAe4/kH/q/xQC+BfhD+p/6/530rw79O3D+jY3/1OR/Nf9nqH/D/H+j/rPqv/D8WfrPhf7D+j8X/wfm/+L+p5j/i/7/zPofvX+F+t/S/89S/+fIv7fk//f9vw79H9j+l4l/VvL/UfLfbP2X5f+t9l/C+S+t/3Psv737z5n9b+D/m/R/3/y/pf5PnP/p7t/L/nvy//v8f5/975n9b+7+9+k/dv0n7t/z/hfuP7n7D+p+M/oXjf4H7X5b9l+L/Y+q/0Pu3lf9d2b/E/L/C/F+h/3H9D5L/Lfy/k/3/Nf8vy/9s+p/e/yf2vy/5T2r/09fPvfvmzRePTEAAADgAzQIGYAO6inuv5l/q/5oCeAH+kP5P8v9q/t83/T9s+p/7/8n8/8z/D9D/mf2fkP8Z+9/Y/831L8H9C/9/if8z8f8j+t8u/p8g/7Pxfy36X1H+V6V/pfpXa//L+V85/xXUvxz6X3P8y6H/KcF/ifNfMvzL9f9T6b/M/i+d/7vI/91kvpvNf0X0X7T4V43/8vjPIf6Xwz6T9r+0/pXpv3L5lxD/EuhfAv3PcP/P4D6T+n+a/jep/xvuv1V9H5z+9zH/G9P/5fn/gvtftPvPtj+c/6+4/+f3/+j+T7b/z+T/5fr/tf5vLv+Xk38p/V+9/2Ptv1f2/6vjf5n6T6T/i//81vPzV47+bnIBAAA24AAcgA7c/z390b3HcwDuAHyY/k/+f7X/2/w/M/7P5/+/0v9t7n+R/+9y/5vyv1H9p+3+lf5v6f076X+d8l9b/VcS/xI/f778X+T/EvpPUP8VwX+J/K+Q/Mvpfxn7b2j/7y7/9/J/Rfd/vfwfz/6XiP/58b8q/peHPqP0H0v+Z/P/lfQ/w/+fE/7PyP8r/n+5/7/S//0S/peM/6XjPz75Dxv/w+x/0fzfiP1X6n9D/b8K+28T/+8e/7vY/5b8r3H+V97/vvl/7vtPkH+l8b9Y/Y8J//fF/9fl/4X6HxT9r2f+08D/l+n//P2/7fy/p/+/vP/37v/c/0v+vxD//6vif3P7f3X/D9x//PlPf5SdmQIAAABcQANoABPgd95/6N7jOQA8gP/8/1/S/5vzf6b4n3b/l+T/Jf8fJf6n3/95+V/O/1fj/8z4X2H9S/2/4vtPC//z4n8S/S9J/1fh/+rwPzr8jwj+x6L/yvA/IfqfFf6vQ/4vqv/L+T+J/i99/5fU/6Xxfyv9X3f/p4P/yeqfB/3Phv2nwf6Hqv5D9n/A+7/w/nfl/zPvf27/H5j/s/t/Yf2Plv9j5H/w/U/o/33iP3n8T3j8Tzb/Q+N/6PVvVfxPjf+06F/v/M+I/8nS/zL7LwX/y9p/X/tf4f6n7H+p+58w/2fe/2nvf8r8D+7/zPzfuv9D83+u/A+h//vSvz/935P+z0D/5/O/3/iXb//z9e/c/O/9n3988uQ5qQAAAAC4AA2gAfQgXv7Bvef1AG4Av5j+z/F/r/hf8v9H5//M9Z+x/4ftP2j+j/T/Rfu/zvpPvv+j/B/p/ovwfyj7D6P+w+v/0POPh/+R8j8E+3/Q9Z8D/kfnv2D4D47+A53/oNY/GPpf7v4T8t/S/89M/3Pi/7nvL2n9r7b+p+r/xPu/N/7vT/8Xwv94+J+D/SfK/zL5n/v/y+D/Rfwfh/7Hmv9E8T8F/U/8/xPefxz3nyn5D9L/g+qf1/7n6L9M/Q9L/5PN/ynrv1L8j7H/57D/J6b/k+o/f/2/S/9Pi/8r9f+p/3dF/1fN/03xfzP+D67/Q93/0Pu/uv9t8T9R/0ftP+n6j/7/i/4fq/9j1/80+T8a/k/t/yX2Xw7/p8X/y+H/yvtPUP/Xn3/+2/9e/p/f+/X/x+8d/m15CQAAsAENYAPgAewD/mHveQ8ANAD/f/VfWv038/9W9n9m+5/Z/+f+/6H9f2X+v7j/5+Z/Qvv/0Pwf+v5j7T+Q+y+q//PUPyD1T3n+I95/2PB/oP4Pu/997j+Y+w95//3T/w37v0z9F7P/0vdPq//zpf979f8y+r/2/S/R/y3zv0z9577/7ul/T/ufYf2fmf8L/T+F+p+w/zXo33D6Twn/55b/ifE/dfr3gP+h+X9G8r+2/s/e/3n7Lwr/c+m/qPmfwv4H1//g+49h/1PnP2n4Dzf/w8v/MPoPnP+B7v/Q/R/o/wfq32v7v5H6z2r/I+t/WvrPa/8n0X+t+t/W/+tWv3v1L7D/0+d/Xv3PXP/XzX+v8F9d/2vNv3H5r37+L9F/5foXV7/w+Jev/0vxL6v+k+B/QvMvM/6T1/+s5eec83Pnn+e/v/iXt/7x4X/e/G/t/6XkP1r+p63/4a2P/v/2l2f/v+T6l3f+9fV/0vGv+e9G/17zv9f+L2v9T6t/s+df8LqX6/6V51+w/EvS/1zzrz//F62/R/BfPP+F6z9Q+lfa/9nzn2z80+N/5PVPa/5TxL/4/P/8/3PjD7z+e9H/j/v//vjL6z9R/i/B/2f9/3fN/6Xzv6//x+tfjfnX/v/T79+o+dfO/+P8L97/B66/UfnXqv+N9l+E/q/y/xfVv2H+l7D+l/b/wv1Xzv8N+9+u/9fk/+v8vyz+F8J/GfnPjv4zmv+s8n/y+B/T/kfPP5nwPwn671L/X9j+R6P/6fSfmvxHzn9z+T9S/1n3L/3/5b3flf//pf7v+v9r97/b/c+s/9vt/3n737P/5+l/cf3fF/+nzX+p+b8C/98Q/zfk/wnzfz3+H0r/1/7/tfE/Nv3P9/974//h+t/b/+t2vyv5X1v/V+v/0vxf2/+r5X/r/K+k/6vw/2L+r/b/+vt/Y/3fGv/X3v9L4/9k/F/a/1f3//r5Xwv/F9+/k/8X1b/V9b+c//vq/9L8r7z/N+1/6/ifOv+F/X/j/G9a/+vnv8v6L0z+q43/k//vo/4L73+h819w/xfR/7X7X/j+V/r/C/9/ofnflf+3rv/l6t+A/Jcq/1fp/9Lwv4X6L0z/q+J/VvyXJ/+F8b82/C9N/yuD/5XFfzPjX478VyH/lca/QvGvB/+Vxr+o+Fcg/yuNfxH3X0z+F9n/NfW/QvGvBv/F/q+K/FdB/yuD/5XWv4D4r/z/avV/1fhXLP+F7V+B+Fco/5XGv5T3Xwr/K/h/0/GvQvwrwv8q9a+K/Fco/6vQv6j3r6/+q5z/yvGvgvqrUv+rxf4q5/+F5V8x/6ua//LuvwLvr6r8V63/C9+/qvevi/urmv+y3L9w/qsz/8vzL6r5l8z/yu5f8vyr5r+0+xfE/8vjX3L/FzX/q9a/C/svYv2rv/9C/lch/1fS/yv0v2D2r1L9q5H/Sty/Iv5Xz/4l5194/Sst/wvovxDvr7j7V6/+S9K/mPSvCPfXqH7Fy7/I+lfQ/0r9Xz3+19H/Cvwv2v6l93/D+F+l+lct/yv3vxLvr7z8K9O/8vgXnP7l21+N/S+Y/CvpX578y9V+Fec/UvGvUPwr4X5F5b94/pXQf1XxL6T9KyJ/Fcq/GPGXmP1K07+C9K8U+lcK/2rOv/L8L+b+S4H/8uq/kvGXRv6l0b9Q+pc8/8vWv3DyLz3+S5Z/VcF/yfhflv/L1n8j/5UaPxcBAABwAB7AA2gA3KkK2r+0/p/f8P+N7l+Q/l+l+18y/+v6v8v431X/l87/1fS/r/8X4/4S+58M+0+J/lPYf9rxz7/+k+N/mvKvhfwr4/+k9r+m/J/8/n/5/C+d/9vkfwr4n1X/m9r/1fW/8vx/mvSvEv6vB//T1/+l8T8F+9+E/pXCf/H9XzP/i/pfwv0v6X2T1f7V5/+p9v/S+F9p/Jcm//Puf2fwr5b/a+5/RfhXC/9X2L+E9S8N/Usvf4nzT9T6VyH/ZeF/qfhfAv5XBP+rjf8S5/+S8b+Q9S91/pXCf+HyLw38y9h+Vcu/5PSXMP6lkH9h+hck/mXsXxL3L2z8q6n+Ssi/mPQvBv9L5r408pe6/6uA/xPuv5b2Lyj8S0p/NeRfsPwvC/4l0b988pe+/iX5v2DyLwr+pVZ/yfcX1/5l7F+G+pdK/zLsv4zxL279S7r+5fAvqPxLLX/J8i+w/CvOvyrzr2/9C8+/JPCv0vxLl/+K8c/u/ZcS/+Waf3VBAADwAB7AA2gAPLgXgH/x7L/Y+B/T/lf2//r5/+b0v/P5nyH/i/h/c/S/c/jfrf6vrP9L9//W/b9g/p+E+9/y/S/d/1X5X3n8L5L+y9B/Mfd/ovlfbPyPzH9J5p8R/K8S/Msl/6vMf/n8Lxr8i1b/C9W/8PyXUP+rxD9T618i+1eG/+vrv1L3LwT9S5f/EvIvA/7L4F/8+C8c/UtE/9LQv4b0Lyj8S6n+StS/ePGv9f6XJ/5lp7/g9S+w/EvNv+Dyr/L9S8S/WPEvOv6L4F8F/avif6n4T6j9S1V/4fEvU/lLD3+J5F8s+ReQfs37Ly/5i+p/1fiXPv7l2V8M/Uuof1HhX6TzrzT6S5Z/xfUve/3LgL/i5S9c/Es6/yr5X6z6155+C/AvWfyLhL+C8pdB/wvsX4H4V6X+lcm/UP2XWP+L2H6N9C9D/Ssp/2XhX5LwL878pZJ/GfevgvxLjX/19V/B+Jc6/mXhX5H8K/H+1aq/BPiXBP/K179o9K+Y/Muv/3LxT0/+i9q/8Pmv6v5r5/+657+C9K/E+pe8/oX0Ly/7i9J+lfKvsP1LxL8U85cC/6UuAAAcgAfwABoAD+7BHeA/6v2v6/+L8V/1/oXmv5L8V4T7q8L/VeC/qvEvwv3r4//08b+Q+Ze2/xXhX7D6l2L/S6r+Uua/QPSXPP+L+38V518x/0vQv+D2L7z9S6L/UvEvGfhLz76E9pd8/mXfXwH5Vzj+Zc1fGP5LF/+L7V8S+S+p/Esz/+XlX7D8l4L/Zc5f+vYvwP4l2V9++1d9/gXbXxD3T7T9S5b/8uyvuPyXWP9y5b8Y+ZeN/6XYX172T5j8y5//ku6fNfGXF/0Lhv8S9JcC/0vwv0z6l4r/pe1f+vhf0fqXRP9y71/a+Zey/gvvX9T4l6X8peJftPpXJv4L27/48S8g/UtN/8rSXwL8L838i67/Etu/WPmXT/6lpD9Y8C/1/JeY/QnvXzr7l2J/NeZfeviXfP6lyX/Z7S+X/Mui/zLuXzL4F6T9StO/FPeXlP3LvX/J+1e4/EvEvwD/StS/FPcvIv7l4b+U9C9c/MvwvyT6l5b+pZN/We5fpflXYL/y+JeU/iXWvwDzLxH9y0h/8e5fSvOvkvyrI3/dBAAD4AE8gAbAgXsA3IG7j38q7J+7/98S/q/P/1vo/6X2fwr5H3X+i+df9vgvKv6Lh3/x5l96+pcq/4XRXwr3r4T7q1p/C+pf/vYvYfyXuX/x6l9k+pfG/UtzfzHoXyT3r0j6lxj+Jd5/E+RfIv1LN/+S0F+Y8pcY/0v6/+LyLwH+ZeZfePuXRv4l4l/09S/J/Cu2vzTxLy38y65/Mfdflf1LFH+R5/+C7l+g+ZcA/iXuXzL5l2r+5dV/8emvdPsXN/4L3L9E95d4/wXcX1Dyr0T9y0N/0e5f2PgXLX6R57+E+pdk/0W4vwD6F6/+C9O/EvUvWf7LqH+p+18s/Es9/+XZX272L1n8y7B/CfcvIfqXl/3V3r/Y9C8J/UvPv4z1r1P9y0L/stlfPP2XL//SuX8R6F80+ZdS/wXWv3DyL/76l5x+Mey/5PSXRP5F67/s8pcA/2XZX1TyLzX5y6p/QecvCv2Ll3+p418I+peo/uXuX3b6l6f+peJf9viXfP3L4l+w/Eu4/4XvX1T8L8L8K8y/sOxfwP+LFgMAgAdoADSAA3CA+9+0v5/9fyT8XxH/i85/xfa/kP4XEv/F/S/J/iXKX6b3L2j8S7p+Scy/pPCvlfyL7F8e+5d2/uXKXzT4L0T/EvSvRPuXBv2LjH9h0L/I9y8S/YtU/wXYX377lxj+ZcG/KPcv9v7lv3/h7l+89S/X/Es9/xLhX+z1L1j8y6a/sPBftf0XRP4y7V/09y9J/kvCv8D4l4/8i7x/ieZfFfiXf//l37/09i+J+1eN/iXcX5L3L2z8i8e/GPiXLf6F378Q9ZeG/5LgXzz2Lzr9S8S/JPWXRP9KxL8E+JcC/6XaX2H2Lyr9C8K/oOxfoPoXn3+J6V8C+5cC/wXgXxD4Lxb9y6B/CfIvQfqXBv0l3r9I9pdc/0u4fwnuXxT3L+L8S9+/BPSXP/5F6l+U9JeM/8mzv/zxr9A8ZeK/0P6X/v1LxL/Ity/XPSXJv7Lh3/5+pcg/kW0v1DiL0H+pZ5/qe5feviXmv5lhb+w5l9U+Jfe/vGrr/D6l479pba/qPAXVP9S2r9A8S+2/Sut/mXgXzz3L8H/pQoAAOABPIAGYAAcgPuff7q/+vzvBfi/y/5L63+F+Je6/pP0v5b0L3r7S7x/mepf7PGvGf+ly19o8pc+/wvuXwr/y8Z/Qen/UuIv2v1LLv/Cq79g6S+L/mXaXwr7V5z+5cy/MPAvKvwr9X9h9pdU/wWgv1TzLyj8S7p/EecvFvyLz7+A85cU/iXuX4j6S8+/6Oxf9PQvUvxLrH8p7V/e9y8l/cu8f6H6V5j8K7F/aehfgfpLvH9R8S8u/Muof1nSv1jyL/H9S0H/Ut4/IvOXmv5V2r/I+lcS/gvhvzTxL3P/C7a/gvhXW/1Lgv/C+1e4/+XVX6j6l6D9i9a/JvMv6vyr4L9I8C+C/Muzv+Dsrwr7y85/OfIvFv9L4b947l+W+ZdN/mXlXzr3Lyr9K3h/WfEvLvyLgv9S8C9c/cvXv4DxL4L+5dC/xPSXG/2LD/+SoH8p0r8E+Jcg/2XsX+L7lxT/peRfevWXP/2Ljb8Y+peC/aXZX3D8i+NfiP2Xo35R6V868y8a/EvSv2DzLxX9C5O/NPcXPP8XAQAADmAAHIAGYAAcgLsv3H3z+V8X/l+M/wXZv/j1LzX9Sx9/WdC/eOlfkPqXD/+i3L/M85e2/Uu6fsn7LyL8y4J/IfcvRftLrv+i47/o6S8L/Us6/6XaX5r2L3n9S0//EudfgvrLvH9x078E+Vfs/uXuX3b5F6H8S55/4e5fFvwLqH/Z5V+M/5dI/+Wf/8n2Lwz+pV9/MeyfXv1L5n4x/pc2/iXGX+z0Fyb/C15/keFfYPiXVv6FpD+h4l/w+JcG/cXUv2j0L7b8S7t/wepfZP6Fqr/4/Jcs/8XZXwj0F4D/4sS/2OdfqPsLR38Z71/c+hdJ/yLaXyr+l3H+RcG/hPUnnfxLgv+S2V9E/ctKfxLir0L9Fwv/5dlfCvmXH/5Fq79k5194+JcY/8XSX+D2ryj6K65/kexfQPiXj37R+Vc+/UvSv8T0T1D8y6B/geJf8Pkviv6Lfv/l2r/Y7V+k+pdK/aXcvyjyL33+xad/oeVf9PpLlv9S1l8C+S+F/GXXvzjzLzL8S8G/sOwv0v5Vgn+J71/E+JdK/pLgv8Tyry/7i25/gdlftPgvhv2Lz/5S2l/K+Beo/Evcv1jyl4R+heVfsPSXR//C6V+09S8d/Uuuf8ntLyL7y+J+QepfRP2LL//C5/+k7F8Q+pd4/+XaX6j1F3d+xeZfqPgLgn+J7S+2/cuW/mLwX7T2Tyb6S5H/EtxfkvpLUf8K6b8o/Svi/Cty/uXcvyD4lwL/5epfyPoLL38J+Vci/mXlX6H8pZb/UuBfnPpLPf8l21/o+Zcy/mXaX2T8S8t+0uBflvoXJ35h9i+q/EuWf2HjX3D4lwT/paZ/UfEv5v2XoX8x4i91+5cK/0XWX1j3V/T8FwgAAByABzAA2oA18D3uJbWf/PzTn//D+H857l9e+5c+/2XaXwT5lwT/xcy/NPevOPqXgv+y6V/W9S9l/EvCv0T0r3z6S0d/MeEvV/wrX/7CqL/w+C9d/EtW/yLqL7r7lxD/peJf6PhLgv4S7r/E9i9t/EsF/wrnL5n7Fwv/RcC/0OxfhPgXj37h4i8S/ou8fwHiryz7l3j/xZ5/4epfZP2LV39x4V9Q+5eI/mWa//L6LyH7y2l/4dpfGvrLtH/x4F+o+pdy//L4L537K4p/ReZfqvgXmv5l718E+Jd8/sXpXxD4Fwr/xZ5/ke5fJPWXHv+lwl/++pd+/mXNvzj2rwD7SxF/Se5f8vov4f6Lk38Z51+w+ldY/8XVXyj7l5T9pZV/IfUXm3+h+S9C/EvAv7jwLwT9y7p+UeAvAv5Lmv5Sr/8y718Q9i+X/GXiL5b6y6B/ge5fYPmXj39x7V8W/Csi/wr9X8T4l7p9UeZf1PKrVn4lAAAA5AA8gAxgA9qADs7r/5r44uT/5eZf6PSXBv6y0F8c/Ssg/Uu4/xLiryz5S7x/0epf9vgXLv5l3r9I9lce/UuwfynSX1T4L4r7Syb/4tg/NfpXl//Cp7/Y6S8R/QsgfxnnL4j8iwB/MfdfoP1LvX9J7F+i+Zd4/mXePwnvL5H8S8q/jPGvBP4lmX/x6S89/Uuz/wKjfwnuX2T4V0b+5dlfFv6Lz7+o8Zc+/6XePyjxl3H/Zda/6PkvMvwLSH8R27+w+o/f/s0XAADAg3gAD8AANoA73/XpS+e//o58//fe/aWmf/nqrwX7SzL/pYy/oPNXCv/l9l+k+Zci/5LaXyr8F8H/5em/fPuXDf9i7F8A+5fC/QvcXwL8Szr/4vSv0vkXu/5y/l8EAADAA3gADcAwAAfgvbvu/8nvP/+HjX855l8w+Zfe/8Xf3yr9CwAAwAN4AA/AABhAd/0vPPXoD3/+/w3vL4b+pdxf7fkvBgAAYADkABzAADQADvDe3c88+M1Pnvrv1f4X2f+K0L8AAAAA/B4o/uHAAXgABqADePfuJx/85uNfnfz3qv0X0f8KAAAAgAfgDmAAGIAG4AE84OHPX//2D3967389+m9g/isAAAAA4AE8gAdoAAzAANz33oP/+/S7z/yH539l91/p/wAAAADwAB6AATAAAyAA+y7eeuKzz97+0Nff5//B9//y/Jfy/xIAAABOwAEwgA1gAxzAd/yH7z54/8d3/W8J//vjX1z4L/z+SwEAACfgAHiABtAAOsB7f/3h/9/+/F+L/y9H/uUAAADwAB6AATAAAiAD3v/g93/z728c+i9d/8X1XwAAABAAgAfwAAxgARyAO3AnHvns8Q+f3vwfFvxXnP+L8v8DAAAH4AEMYAAagAdwD+7A7X+988Gf/PHdfzX7/+r7L8j/AAAADMAAcIAH0AAOAAH4Dvf+6/i3r7+w8+/E/U+Tf6UAAIAkcAANYAMcgAfQAN73zsdn/vv4d2Z/+2vuvxT3r0QAAIAkcAAdgADQgAfgvbe/+cm/3/yD7/0nFf/V/L8AAAALIAFsgAEwABpAdz3y6ff/5vHvvv3f0f7/gv0XY/8DAADwAAzABnCAHsAA+L57f3/w38ePfPzfS//Xz/8CAAAOQAswgA1gAByAADy4e+CP/vy/n3/9j3f9p+v/mv6XAQAAkIACMAAOYAAcgAfc+/B/7zzy8U/+x63/Y9v/mvJ/AgAAJ5AAHIAN4AAdAAdA97rv4e+v/PO9//+G9H/l7S+L/48BAIC/T+q/8y0EAAZgABqAB+A9fPTB//76g3v+f6P+/73gvxD3r8oAAIAkcAAMwABsAA2AD2Du//f4Fz583f73S/+/7f0vxf5rAQAAJ5AAHKD5ABiAATAA+44+/N3f33z475f+f9f3X2z/AgAAHICVkAAMwAAMAAPYgXufeO7uD/7v5P/fXf13X/+lAQAAHICVEAAcgAEwAAdgHu3AvT449s2H73r6L2t/Rfsfmf4NAACAAVgLAcAANgADYACeQNe77+Hvr3z8v98F/78y/y/b/w4AAHADfIAOYAAYgAPYgPe71/34+d8+/+v3vP8117+F8V8GAACcgASwARiAATAAA/AeLrn3H3+5+9/9895/sfevqvoXAAAADMBaSAADMAAYgAHwAfyAey6++cTjR77+0m/+R+n/7f0vAAAABmACJIAHYAANAA/gAdx7z2O/evL+1/787+T+1zD/DQAAOIAHMAANQAO4ADfg3nve7H2n3v7lB7/73t+K+/89+z9i/ysAAAAnCAFYAAfgABjAADyAL+5+5dGf/PrJvx/4u6X/1/y/AADAAFiJAcABGAADYAAWwD14y/P/ft6n33vyg38t+i+P/3UAAMAJuALsgAZgAByAAXAHe/fuX9/8y9//5/6bW//l9C+x/wcAAJRAgQAcgAEYgAFYgPfAHRe//NWvP73v/5O+l13/ZQAAwAigYgANQAOwgQfgAHi//vPnj3723/c/f/Gf3/n/tfy/gv+/CgAAAABOQAgwAA/AABoAP8Db5z93z/8u//DHP//z78T/v5r9V6b+KgAAAE4QArAADmABbEAGMAADcB8cf/Y//e7Z+x/8679p/l+V/pcE/zsAAGAADMACbIAG0AAagA1g+5M//+iR5/516L2/3vevN/1Lcv/XAAAYgAHIACsgADYgAxqADrCPvfdPfvHovx/8e+/2Xxf+/0vjvwEAwAGoIMABMIAHMAAagA5gH3f3h/+445Wnv/fNf7Hk/1r6Xz4CAABOwAIcgA3AAHYAHUAX3P6kxx88f+7v75Pfv+v2D3/i+S91/UsAAMABmADLQAOwAWwgA3AAHfAevm1+8uPnHvvt2X//3u//67y/ivmvAQCAE3CAd6ABA8AI+AC+L9x6+P3f/O1P/h9c/+v4/7PufwcAAGwAHyAADYgANoAMaADugfc+f+z+v//2o+d/R/lfqv3LAADAARgAH+AA2IANyABOwH1wx2Pvvv2V+3/g3r+y9y9p/l8AAICDMB+AATiADmAAHUAb3Hngk39/7IWPj3z48T9v/Fdf/xIAADCAARiQAQaQCdgAOoAO+I4Hv/zUv3/+wM9//cMff+L+f7n4PwQA4AD8ACQgAzEAP8AO0AEc4L0PHfjo57/+58uPfvf0v19K/5eW/ksAAAAHIAJcgAewgAxAA3QAdwAe+sRj//jA9w+//6UPf/e3L3z65P8W/T8AAIDTQB6AA9iADWQAPeABcID3/n3w//99859+/sP/efS/6/w/Vfo/AAAAXIBVsA1gAA7ARjKgAdgA/D54x4//eN+//fTjv/rXF39n63+BAACAA3AAC7AAbCAH2ADsgPs+cO+DH33i70sPfv2rN//m+a/F/lUAAADQgNTAADaABWQAFcAA2AF88PZ3n3ro59+46Lcv/vyXj37/xR8e+PuvL3+t+y8FAAA6gA2QBDKAADAgA9gBdAH+vOPXv/+3/99587+J+y+i/sX8PwQAAAAAAGxG4/+8AAAAASUVORK5CYII=';
+const svgSoccerBall = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="48" fill="#fff" stroke="#000" stroke-width="3"/><polygon points="50,22 25,40 35,70 65,70 75,40" fill="#222"/><line x1="50" y1="22" x2="50" y2="2" stroke="#222" stroke-width="4"/><line x1="25" y1="40" x2="4" y2="30" stroke="#222" stroke-width="4"/><line x1="75" y1="40" x2="96" y2="30" stroke="#222" stroke-width="4"/><line x1="35" y1="70" x2="20" y2="92" stroke="#222" stroke-width="4"/><line x1="65" y1="70" x2="80" y2="92" stroke="#222" stroke-width="4"/><polygon points="50,2 35,0 65,0" fill="#222"/><polygon points="4,30 0,45 0,15" fill="#222"/><polygon points="96,30 100,45 100,15" fill="#222"/><polygon points="20,92 10,100 40,100" fill="#222"/><polygon points="80,92 90,100 60,100" fill="#222"/></svg>`;
+ballImg.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgSoccerBall);
 
 // Game state variables
 let ball = { x: 0, y: 0, radius: 15, speedX: 0, speedY: 4, sizeGrowth: 0.1, active: false };
 
-function resizeCanvas() {
+function resizeCanvases() {
     canvasElement.width = 1280;
     canvasElement.height = 720;
+    offscreenCanvas.width = 1280;
+    offscreenCanvas.height = 720;
 }
-resizeCanvas();
+resizeCanvases();
 
 cameraOpacitySlider.addEventListener('input', (e) => {
     gameConfig.cameraOpacity = parseFloat(e.target.value);
-    videoElement.style.opacity = gameConfig.cameraOpacity;
 });
-
 ballSpeedSlider.addEventListener('input', (e) => {
     gameConfig.ballBaseSpeed = parseFloat(e.target.value);
 });
 
-
 function spawnBall() {
     ball.x = canvasElement.width / 2;
-    ball.y = canvasElement.height * 0.4;
-    ball.radius = 10;
-    ball.speedX = (Math.random() - 0.5) * 12;
-    ball.speedY = gameConfig.ballBaseSpeed + Math.random() * 3;
+    ball.y = canvasElement.height * 0.3; // Spawn slightly higher
+    ball.radius = 12;
+    ball.speedX = (Math.random() - 0.5) * 14;
+    ball.speedY = gameConfig.ballBaseSpeed + Math.random() * 4;
     ball.sizeGrowth = 0.08;
     ball.active = true;
 }
 
 function updateGame() {
     if (!ball.active) {
-        setTimeout(spawnBall, 1500); // Longer delay between shots
-        ball.active = 'spawning'; // Use a state to prevent multiple spawns
+        setTimeout(spawnBall, 1200); 
+        ball.active = 'spawning'; 
     }
 
     if (ball.active === true) {
@@ -178,12 +194,14 @@ function updateGame() {
         ball.radius += ball.sizeGrowth * ball.speedY;
 
         let saved = false;
-        // Full Body Collision Detection
+        // Collision Detection for ALL mapped body parts
         for (const part in contactPoints) {
             if (contactPoints[part].x) {
                 let dist = Math.hypot(ball.x - contactPoints[part].x, ball.y - contactPoints[part].y);
-                if (dist < ball.radius + 35) { // 35px buffer for better playability
+                // Dynamically adjust hit box based on ball's 3D perspective size
+                if (dist < ball.radius + 35) { 
                     saved = true;
+                    // Trigger visual pop at exact point of impact
                     triggerFx("#4caf50", contactPoints[part].x, contactPoints[part].y);
                     break;
                 }
@@ -191,7 +209,7 @@ function updateGame() {
         }
 
         if (saved) {
-            score += 10 + streak; // Bonus points for streaks
+            score += 10 + (streak * 2); // Multiplier for streaks
             streak++;
             updateUI();
             ball.active = false;
@@ -203,26 +221,28 @@ function updateGame() {
             ball.active = false;
         }
     }
-     // Update and draw particles
+    
+    // Process particle physics
     for (let i = particles.length - 1; i >= 0; i--) {
         const p = particles[i];
         p.x += p.vx;
         p.y += p.vy;
-        p.alpha -= 0.04;
-        if (p.alpha <= 0) {
-            particles.splice(i, 1);
-        }
+        p.alpha -= 0.03;
+        if (p.alpha <= 0) particles.splice(i, 1);
     }
 }
 
 function drawGame() {
-    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-
+    // Draw the spinning ball
     if (ball.active === true) {
-        canvasCtx.drawImage(ballImg, ball.x - ball.radius, ball.y - ball.radius, ball.radius * 2, ball.radius * 2);
+        canvasCtx.save();
+        canvasCtx.translate(ball.x, ball.y);
+        canvasCtx.rotate(ball.y * 0.06); // Spin effect based on Y movement
+        canvasCtx.drawImage(ballImg, -ball.radius, -ball.radius, ball.radius * 2, ball.radius * 2);
+        canvasCtx.restore();
     }
     
-    // Draw particles
+    // Draw explosion particles
     particles.forEach(p => {
         canvasCtx.save();
         canvasCtx.globalAlpha = p.alpha;
@@ -240,55 +260,79 @@ function updateUI() {
     goalsEl.innerText = goals;
 }
 
-// Visual impact splash on hit/miss
 function triggerFx(color, x, y) {
-    if (x && y) { // Create a particle burst at the contact point
-        for (let i = 0; i < 20; i++) {
+    if (x && y) { 
+        for (let i = 0; i < 25; i++) {
             particles.push({
                 x: x,
                 y: y,
-                vx: (Math.random() - 0.5) * 8,
-                vy: (Math.random() - 0.5) * 8,
-                size: Math.random() * 5 + 2,
+                vx: (Math.random() - 0.5) * 12,
+                vy: (Math.random() - 0.5) * 12,
+                size: Math.random() * 6 + 3,
                 color: color,
                 alpha: 1
             });
         }
-    } else { // Goal scored, flash the border
-        gameContainer.style.outline = `8px solid ${color}`;
-        setTimeout(() => gameContainer.style.outline = 'none', 200);
+    } else { 
+        document.getElementById('game-container').style.outline = `8px solid ${color}`;
+        setTimeout(() => document.getElementById('game-container').style.outline = 'none', 200);
     }
 }
 
 function onResults(results) {
-    if (results.poseLandmarks) {
-        // Map all relevant body parts
+    // 1. Draw Static Background
+    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+    if (bgImg.complete) {
+        canvasCtx.drawImage(bgImg, 0, 0, canvasElement.width, canvasElement.height);
+    }
+
+    // 2. Isolate and Draw Player (Segmentation)
+    if (results.segmentationMask && results.poseLandmarks) {
+        offscreenCtx.globalCompositeOperation = 'source-over';
+        offscreenCtx.clearRect(0, 0, offscreenCanvas.width, offscreenCanvas.height);
+        
+        offscreenCtx.save();
+        // Mirror the canvas for the player drawing so it feels like a mirror
+        offscreenCtx.translate(offscreenCanvas.width, 0);
+        offscreenCtx.scale(-1, 1);
+        
+        // Draw Segmentation Mask
+        offscreenCtx.drawImage(results.segmentationMask, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+        
+        // Use Source-In to only keep the video where the mask is solid
+        offscreenCtx.globalCompositeOperation = 'source-in';
+        offscreenCtx.drawImage(results.image, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+        offscreenCtx.restore();
+
+        // Draw the isolated player over the stadium background
+        canvasCtx.globalAlpha = gameConfig.cameraOpacity;
+        canvasCtx.drawImage(offscreenCanvas, 0, 0, canvasElement.width, canvasElement.height);
+        canvasCtx.globalAlpha = 1.0;
+        
+        // Map Body Parts for Game Logic
         const w = canvasElement.width;
         const h = canvasElement.height;
         const landmarks = results.poseLandmarks;
         
-        // Helper to get coordinates
+        // X is reversed here to match the mirrored display
         const getCoords = (index) => ({
             x: (1 - landmarks[index].x) * w,
             y: landmarks[index].y * h
         });
 
         contactPoints = {
-            left_wrist: getCoords(15),
-            right_wrist: getCoords(16),
-            left_elbow: getCoords(13),
-            right_elbow: getCoords(14),
-            left_shoulder: getCoords(11),
-            right_shoulder: getCoords(12),
-            nose: getCoords(0), // Head
-            left_knee: getCoords(25),
-            right_knee: getCoords(26),
+            left_wrist: getCoords(15), right_wrist: getCoords(16),
+            left_elbow: getCoords(13), right_elbow: getCoords(14),
+            left_shoulder: getCoords(11), right_shoulder: getCoords(12),
+            head: getCoords(0), // Nose
+            left_knee: getCoords(25), right_knee: getCoords(26),
+            left_foot: getCoords(31), right_foot: getCoords(32) // Added feet!
         };
     }
     
-    // Main game loop
-    drawGame();
+    // 3. Process Physics and Draw Game Elements
     updateGame();
+    drawGame();
 }
 
 const pose = new Pose({
@@ -298,10 +342,11 @@ const pose = new Pose({
 pose.setOptions({
     modelComplexity: 1,
     smoothLandmarks: true,
+    enableSegmentation: true, // Turns on background removal
+    smoothSegmentation: true,
     minDetectionConfidence: 0.5,
     minTrackingConfidence: 0.5
 });
-
 pose.onResults(onResults);
 
 const camera = new Camera(videoElement, {
@@ -313,7 +358,7 @@ const camera = new Camera(videoElement, {
 });
 camera.start();
 
-updateUI(); // Initialize UI
+updateUI();
 </script>
 </body>
 </html>
