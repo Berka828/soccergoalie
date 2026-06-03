@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Goalkeeper Challenge</title>
+    <title>Goalkeeper Challenge - Final</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
     <style>
@@ -19,7 +19,13 @@
             box-shadow: 0 20px 50px rgba(0,0,0,0.8);
             background-color: #000;
         }
-        video { display: none; }
+        /* Correct way to hide the video while keeping it active */
+        #webcam {
+            position: absolute;
+            top: -9999px;
+            left: -9999px;
+            opacity: 0;
+        }
         canvas {
             position: absolute; top: 0; left: 0;
             width: 100%; height: 100%; z-index: 2;
@@ -65,20 +71,17 @@
 </head>
 <body>
     <div id="game-container">
-        <video id="webcam"></video>
+        <video id="webcam" autoplay playsinline muted></video>
         <canvas id="gameCanvas"></canvas>
-
         <div id="loading-screen">
             <h2>Loading Camera...</h2>
             <p>Please grant camera permissions when prompted.</p>
         </div>
-
         <div id="ui-overlay">
             <div class="ui-box">SCORE: <span id="score">0</span></div>
             <div id="timer-box" class="ui-box">TIME: <span id="time">120</span></div>
             <div class="ui-box">STREAK: <span id="streak">0</span></div>
         </div>
-
         <div id="game-over-screen">
             <h1>Game Over</h1>
             <p>Final Score: <span id="final-score">0</span></p>
@@ -91,7 +94,9 @@
     const videoElement = document.getElementById('webcam');
     const canvasElement = document.getElementById('gameCanvas');
     const canvasCtx = canvasElement.getContext('2d');
-    
+    const offscreenCanvas = document.createElement('canvas');
+    const offscreenCtx = offscreenCanvas.getContext('2d');
+
     const ui = {
         score: document.getElementById('score'),
         streak: document.getElementById('streak'),
@@ -110,17 +115,16 @@
         contactPoints: {},
         playerCutout: null,
         gameTimer: null,
-        isBallActive: false,
-        nextBallTimeout: null
+        isBallActive: false
     };
+
+    let ball = {};
 
     const bgImg = new Image();
     bgImg.src = 'soccerfifabg.png';
 
     const ballImg = new Image();
-    ballImg.src = 'data:image/png;base64,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';
-    
-    let ball = {};
+    ballImg.src = 'data:image/png;base64,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_AV+t+x/Uu6/5PFXnP6FSn9R4i9l/As4/0LS/7TzLzT6CwH/UuxfRPSXGv+l4F94/Qt+/6Lev+Dsr5T+pY5/Ie9fkviXoP3LqH9x9C9i/YvG/hLmLyb5l+T+xcBfRPSXQ38Z8i9c/Es6/+LvLwj+pYh/IedflvxLen6h4S/h+UvT/gWIf+HgLyj+pae/aPCvKPlLwX+J2190+JfR/gWtvyDyF3b9S2Z/IfIv7vrVlP/y1V9W+ZdE/iLbvwD6V47+paxf2PYXmf7lyV9W+5d+/pLWXwj5lxj+xYN/IfQvg/5Vw7+M+JdY/tLhX1j2l9z9ZcBfQPiLFv+S1l8i+ZcO/sWkf4Hkr2r6lwj/Uti/ZPEvWvyLrH/J9S+S/csyf2nqL6X9y0Z/6esvMv+S1V9M+Zco/+LFX6j5V6T9i8t+AfdX9P4lVv9CjL9E8i+d/cuw/wLaX2z0lwj/paO/7PlfIv0Lz/7S1l/K/Ati/7LWX7j4lxj+RdO/wPQvGfqLCH8h6F9U+xdZ/mXcXwT7y3b/0uJfaPoLkn9R31+0/IsGf7nsL4b9SxH/4upfNPkvzPzFrL9A8y+c+pco/sW2vyDxL6T/EuhfgPyLQX+5+i8+/AvQfqnpV4T9SwN/IexfFv5Lq/+ywl+w/Mtifyn2L1D+RcG/SPUXFv5yxV/w+hcy/oXw/mP2L3j+S5R/QetfWv2LSX/Z279o+S+N/Iuhf2HmLxT+xZt/KfavMv+i3V9C+JdU/sLEV3b+RaC/GPGXn/7FiX/p+S8W/pX5vyjwL1j9lZt/Yeov6/qLT/8y0l+w+Jcq/mLbXxD4y8K/SPYvMvyLP/6Fkn+59ldo/Svi/Uu6/sK2f+nhLyz9Cwt/oeFfQPiXjH1R1V9s/UsifxnwLzj9ix9/wfhXmPqLHX+R379A+xcy/gXBv0DyL+L8S3L/AupfNPgXRf4S8VfS/AvQvsjjL1T8S9a/BPgXn/6l2l+C/Ys+/yLMX+j6S1r/AunfnPhLrL9Y9S8t/Iuy/zL4S4F/Me9fKviL7/4lwn855S+R/MsKfxHwL3n+pZ1/KeNf2PaLF/+y379M8y8m/EuifwnxLxH/Zbh/ifYvnf2Ly/7C0V+g+xcr/mLcvwj1Vyb+ZcC/ePgvkvzLoX/J2S8S/Muiv2DxLx/8Syz/wt5fYvpLKX9h5V82+pcM/wKiv6jsL2P+Bc9/WeJfGPeL7f7yzL+Q0Z/QAA/AAXIAAfgAQfgAfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfg/wPea1z7Dz5oYAAAAASUVORK5CYII=';
 
     function gameLoop() {
         if (state.gameStatus === 'playing') updateGame();
@@ -151,6 +155,7 @@
 
     function startGame() {
         state = { ...state, gameStatus: 'playing', score: 0, streak: 0, bestStreak: 0, timeLeft: 120, isBallActive: false };
+        ball = {};
         ui.gameOver.style.display = 'none';
         ui.time.innerText = state.timeLeft;
         ui.timerBox.style.borderColor = '#ff9800';
@@ -174,7 +179,7 @@
         ui.finalStreak.innerText = state.bestStreak;
         ui.gameOver.style.display = 'flex';
     }
-    
+
     function spawnBall() {
         state.isBallActive = true;
         ball = {
@@ -188,15 +193,13 @@
     }
 
     function updateGame() {
-        // Reliable spawning logic
         if (!state.isBallActive && state.gameStatus === 'playing') {
-            state.isBallActive = true; // Prevents multiple calls
-            setTimeout(spawnBall, 1500); // Delay before next ball
+            state.isBallActive = true; // Mark as active to prevent multiple spawns
+            setTimeout(spawnBall, 1500);
         }
 
-        if (typeof ball.state === 'undefined') return;
+        if (!ball.state) return;
 
-        // --- Update Ball Physics ---
         if (ball.state === 'incoming') {
             ball.x += ball.speedX;
             ball.y += ball.speedY;
@@ -222,16 +225,16 @@
             } else if (ball.y > canvasElement.height + ball.radius) {
                 state.streak = 0;
                 triggerFx("#f44336");
-                state.isBallActive = false; // Allow new ball to spawn
-                ball = {}; // Clear current ball
+                state.isBallActive = false;
+                ball = {};
             }
         } else if (ball.state === 'deflected') {
             ball.x += ball.speedX;
             ball.y += ball.speedY;
             ball.radius -= ball.sizeGrowth * Math.abs(ball.speedY) * 2;
             if (ball.radius < 1 || ball.y < 0) {
-                state.isBallActive = false; // Allow new ball to spawn
-                ball = {}; // Clear current ball
+                state.isBallActive = false;
+                ball = {};
             }
         }
         updateUI();
@@ -249,7 +252,7 @@
             canvasCtx.restore();
         }
         
-        if (state.isBallActive && ball.state) {
+        if (ball.state) {
             canvasCtx.save();
             canvasCtx.translate(ball.x, ball.y);
             canvasCtx.rotate(ball.rotation);
