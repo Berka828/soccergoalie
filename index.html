@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Webcam XR Goalkeeper Game</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #111;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        #game-container {
+            position: relative;
+            width: 800px;
+            height: 500px;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+        }
+        /* Mirror the webcam and overlay it perfectly */
+        video, canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            transform: scaleX(-1); /* Mirror for natural movement */
+        }
+        video {
+            object-fit: cover;
+            opacity: 0.6; /* Blends user smoothly into the "game world" */
+        }
+        canvas {
+            z-index: 2;
+        }
+        /* Minimalist UI Overlay */
+        #ui-overlay {
+            position: absolute;
+            top: 20px;
+            left: 0;
+            right: 0;
+            display: flex;
+            justify-content: space-between;
+            padding: 0 40px;
+            z-index: 10;
+            pointer-events: none;
+        }
+        .ui-box {
+            background: rgba(0, 0, 0, 0.65);
+            backdrop-filter: blur(8px);
+            padding: 10px 20px;
+            border-radius: 8px;
+            color: white;
+            font-weight: bold;
+            font-size: 1.2rem;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        #score-box { border-left: 4px solid #4caf50; }
+        #miss-box { border-left: 4px solid #f44336; }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <video id="webcam" autoplay playsinline></video>
+        <canvas id="gameCanvas"></canvas>
+
+        <div id="ui-overlay">
+            <div id="score-box" class="ui-box">SAVES: <span id="saves">0</span></div>
+            <div id="miss-box" class="ui-box">GOALS: <span id="goals">0</span></div>
+        </div>
+    </div>
+
+<script>
+const videoElement = document.getElementById('webcam');
+const canvasElement = document.getElementById('gameCanvas');
+const canvasCtx = canvasElement.getContext('2d');
+
+// UI Elements
+const savesEl = document.getElementById('saves');
+const goalsEl = document.getElementById('goals');
+
+let saves = 0;
+let goals = 0;
+
+// Game Object Configurations
+let ball = { x: 400, y: -50, radius: 15, speedX: 0, speedY: 4, sizeGrowth: 0.08, active: false };
+let hands = { left: {x: 0, y: 0}, right: {x: 0, y: 0} };
+
+// Set Canvas Internal Resolution
+function resizeCanvas() {
+    canvasElement.width = 800;
+    canvasElement.height = 500;
+}
+resizeCanvas();
+
+// --- GAME LOGIC ---
+
+function spawnBall() {
+    ball.x = 300 + Math.random() * 200; // Shoot from a random central point
+    ball.y = 150;                        // Horizon start point
+    ball.radius = 12;                    // Small at first (depth perspective)
+    
+    // Random target vectors towards the edges/corners
+    ball.speedX = (Math.random() - 0.5) * 7;
+    ball.speedY = 3 + Math.random() * 4;
+    ball.sizeGrowth = 0.08;              // Gets bigger as it approaches camera
+    ball.active = true;
+}
+
+function updateGame() {
+    if (!ball.active) {
+        setTimeout(spawnBall, 1000);
+        ball.active = true;
+    }
+
+    if (ball.active) {
+        // Move and Scale ball to simulate pseudo-3D traveling "towards" camera
+        ball.x += ball.speedX;
+        ball.y += ball.speedY;
+        ball.radius += ball.sizeGrowth * ball.speedY;
+
+        // --- COLLISION DETECTION (Saves) ---
+        // Check distance to tracked left/right wrists
+        let distToLeftHand = Math.hypot(ball.x - hands.left.x, ball.y - hands.left.y);
+        let distToRightHand = Math.hypot(ball.x - hands.right.x, ball.y - hands.right.y);
+
+        if (distToLeftHand < ball.radius + 30 || distToRightHand < ball.radius + 30) {
+            saves++;
+            savesEl.innerText = saves;
+            triggerFx("#4caf50");
+            ball.active = false;
+        } 
+        // --- MISS DETECTION (Goals) ---
+        else if (ball.y > canvasElement.height) {
+            goals++;
+            goalsEl.innerText = goals;
+            triggerFx("#f44336");
+            ball.active = false;
+        }
+    }
+}
+
+function drawGame() {
+    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+    // 1. Draw Clean Minimalist Goalposts
+    canvasCtx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+    canvasCtx.lineWidth = 12;
+    canvasCtx.lineJoin = 'bevel';
+    canvasCtx.beginPath();
+    canvasCtx.moveTo(100, 500); // Bottom Left
+    canvasCtx.lineTo(100, 120); // Top Left Corner
+    canvasCtx.lineTo(700, 120); // Top Right Corner
+    canvasCtx.lineTo(700, 500); // Bottom Right
+    canvasCtx.stroke();
+
+    // 2. Draw the Ball (Soccer pattern silhouette)
+    if (ball.active) {
+        canvasCtx.save();
+        canvasCtx.beginPath();
+        canvasCtx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+        canvasCtx.fillStyle = '#fff';
+        canvasCtx.shadowBlur = 15;
+        canvasCtx.shadowColor = 'rgba(0,0,0,0.4)';
+        canvasCtx.fill();
+        
+        // Simple pentagon markings
+        canvasCtx.strokeStyle = '#222';
+        canvasCtx.lineWidth = ball.radius * 0.15;
+        canvasCtx.stroke();
+        canvasCtx.restore();
+    }
+
+    // 3. Optional visual feedback for tracked hands
+    canvasCtx.fillStyle = '#00e5ff';
+    canvasCtx.beginPath();
+    canvasCtx.arc(hands.left.x, hands.left.y, 10, 0, Math.PI * 2);
+    canvasCtx.arc(hands.right.x, hands.right.y, 10, 0, Math.PI * 2);
+    canvasCtx.fill();
+}
+
+// Visual impact splash on hit/miss
+function triggerFx(color) {
+    canvasElement.style.outline = `8px solid ${color}`;
+    setTimeout(() => canvasElement.style.outline = 'none', 200);
+}
+
+// --- MOTION CAPTURE PIPELINE ---
+
+function onResults(results) {
+    drawGame();
+    updateGame();
+
+    if (results.poseLandmarks) {
+        // MediaPipe indexes: 15 = Left Wrist, 16 = Right Wrist
+        // Note: Coordinates are normalized (0.0 to 1.0), so multiply by canvas size
+        // Note 2: Inverted X mapping handles the mirrored video stream setup cleanly
+        const leftWrist = results.poseLandmarks[15];
+        const rightWrist = results.poseLandmarks[16];
+
+        hands.left.x = (1 - leftWrist.x) * canvasElement.width;
+        hands.left.y = leftWrist.y * canvasElement.height;
+
+        hands.right.x = (1 - rightWrist.x) * canvasElement.width;
+        hands.right.y = rightWrist.y * canvasElement.height;
+    }
+}
+
+// Initialize MediaPipe Pose tracking
+const pose = new Pose({
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+});
+
+pose.setOptions({
+    modelComplexity: 1,
+    smoothLandmarks: true,
+    minDetectionConfidence: 0.5,
+    minTrackingConfidence: 0.5
+});
+
+pose.onResults(onResults);
+
+// Setup Camera Stream loop
+const camera = new Camera(videoElement, {
+    onFrame: async () => {
+        await pose.send({image: videoElement});
+    },
+    width: 640,
+    height: 480
+});
+camera.start();
+
+</script>
+</body>
+</html>
