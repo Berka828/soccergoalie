@@ -352,3 +352,16 @@ pose.setOptions({
     smoothSegmentation: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5
 });
 pose.onResults(onResults);
+
+const camera = new Camera(videoElement, {
+    onFrame: async () => await pose.send({ image: videoElement }),
+    width: 1280, height: 720
+});
+
+// Wait for the user to grant camera access and then start
+camera.start().then(() => {
+    startGame();
+});
+</script>
+</body>
+</html>
