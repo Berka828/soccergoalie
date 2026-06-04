@@ -42,6 +42,7 @@
         <button class="preset-btn" data-preset="standard">Preset 2: Standard</button>
         <button class="preset-btn" data-preset="event">Preset 3: Event Mode</button>
       </div>
+      <div id="camera-warning" style="display:none;margin:12px auto;padding:12px;border-radius:12px;background:rgba(255,80,80,.16);border:1px solid rgba(255,120,120,.4);font-weight:800;color:#ffd0d0;"></div>
       <div class="settings-grid">
         <div class="setting"><label>Game Length</label><select id="length-select"><option value="30">30 sec</option><option value="60">1 min</option><option value="90">90 sec</option><option value="120" selected>2 min</option><option value="180">3 min</option></select></div>
         <div class="setting"><label>Difficulty</label><select id="difficulty-select"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option></select></div>
@@ -60,8 +61,9 @@
 <script>
 const video=document.getElementById('webcam'), canvas=document.getElementById('gameCanvas'), ctx=canvas.getContext('2d');
 const W=1280,H=720; canvas.width=W; canvas.height=H;
-const ui={startScreen:document.getElementById('start-screen'),loadingScreen:document.getElementById('loading-screen'),gameOver:document.getElementById('game-over-screen'),startBtn:document.getElementById('start-btn'),playAgainBtn:document.getElementById('play-again-btn'),startError:document.getElementById('start-error'),loadingError:document.getElementById('loading-error'),finalScore:document.getElementById('final-score'),finalStreak:document.getElementById('final-streak'),finalRank:document.getElementById('final-rank'),length:document.getElementById('length-select'),difficulty:document.getElementById('difficulty-select'),background:document.getElementById('background-select'),bgUpload:document.getElementById('bg-upload')};
+const ui={startScreen:document.getElementById('start-screen'),loadingScreen:document.getElementById('loading-screen'),gameOver:document.getElementById('game-over-screen'),startBtn:document.getElementById('start-btn'),playAgainBtn:document.getElementById('play-again-btn'),startError:document.getElementById('start-error'),loadingError:document.getElementById('loading-error'),finalScore:document.getElementById('final-score'),finalStreak:document.getElementById('final-streak'),finalRank:document.getElementById('final-rank'),cameraWarning:document.getElementById('camera-warning'),cameraSelect:document.getElementById('camera-select'),length:document.getElementById('length-select'),difficulty:document.getElementById('difficulty-select'),background:document.getElementById('background-select'),bgUpload:document.getElementById('bg-upload')};
 let pose,stream,animationId,timerId,latestLandmarks=null,latestMask=null,lastPoseSend=0,status='idle';
+let cameraListLoaded=false;
 let score=0,displayScore=0,points=0,streak=0,bestStreak=0,saves=0,misses=0,level=1,timeLeft=120,totalTime=120,highScore=Number(localStorage.getItem('goalieHighScore')||0);
 let message={text:'READY?',ttl:1400,color:'#ffcf47'},particles=[],flash=0,shotDelay=0,ball=createBall();
 let customBgImg=null;
@@ -76,9 +78,73 @@ ui.bgUpload.addEventListener('change',e=>{const f=e.target.files[0]; if(!f)retur
 function syncSettings(){settings.length=Number(ui.length.value);settings.difficulty=ui.difficulty.value;settings.background=ui.background.value; localStorage.setItem('goalieSettings',JSON.stringify(settings));}
 try{const saved=JSON.parse(localStorage.getItem('goalieSettings')||'{}'); if(saved.length)ui.length.value=saved.length; if(saved.difficulty)ui.difficulty.value=saved.difficulty; if(saved.background)ui.background.value=saved.background; syncSettings();}catch(e){syncSettings();}
 function cameraErrorMessage(err){const base=err&&err.name?err.name:'Camera error'; if(location.protocol!=='https:'&&location.hostname!=='localhost'&&location.hostname!=='127.0.0.1')return `${base}: Camera access requires HTTPS. Use your https:// GitHub Pages link.`; if(base==='NotAllowedError'||base==='PermissionDeniedError')return 'Camera permission was blocked. Click the lock/camera icon in Chrome, allow Camera, then refresh.'; if(base==='NotFoundError'||base==='DevicesNotFoundError')return 'No camera was found. Make sure the webcam or OBS Virtual Camera is connected.'; if(base==='NotReadableError'||base==='TrackStartError')return 'The camera is already being used by another app. Close Zoom/OBS/Teams/other tabs, then refresh.'; return `${base}: ${err.message||'Unable to start camera.'}`;}
-async function startCamera(){if(!navigator.mediaDevices?.getUserMedia)throw new Error('getUserMedia is not supported. Use Chrome or Edge.'); stream=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:1280},height:{ideal:720},facingMode:'user'},audio:false}); video.srcObject=stream; await video.play(); await new Promise(r=>video.readyState>=2?r():video.onloadedmetadata=r);}
+async function loadCameraList(){
+  if(!navigator.mediaDevices?.enumerateDevices || !ui.cameraSelect) return;
+  try{
+    const devices=await navigator.mediaDevices.enumerateDevices();
+    const cams=devices.filter(d=>d.kind==='videoinput');
+    const current=ui.cameraSelect.value;
+    ui.cameraSelect.innerHTML='<option value="">Auto camera</option>'+cams.map((d,i)=>`<option value="${d.deviceId}">${d.label||`Camera ${i+1}`}</option>`).join('');
+    if(current) ui.cameraSelect.value=current;
+    cameraListLoaded=true;
+  }catch(e){ console.warn('Could not list cameras yet',e); }
+}
+async function startCamera(){
+  if(!navigator.mediaDevices?.getUserMedia) throw new Error('getUserMedia is not supported. Use Chrome or Edge.');
+  ui.loadingError.textContent='Starting camera...';
+  if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
+  const selected=ui.cameraSelect?.value||'';
+  const attempts=[];
+  if(selected){ attempts.push({video:{deviceId:{exact:selected},width:{ideal:1280},height:{ideal:720}},audio:false}); }
+  attempts.push({video:{width:{ideal:1280},height:{ideal:720},facingMode:'user'},audio:false});
+  attempts.push({video:true,audio:false});
+  let lastErr=null;
+  for(const constraints of attempts){
+    try{
+      stream=await navigator.mediaDevices.getUserMedia(constraints);
+      video.srcObject=stream;
+      video.muted=true;
+      video.playsInline=true;
+      await new Promise((resolve,reject)=>{
+        const done=()=>resolve();
+        const fail=e=>reject(e);
+        if(video.readyState>=2) return resolve();
+        video.onloadedmetadata=done;
+        video.onerror=fail;
+        setTimeout(resolve,2500);
+      });
+      try{ await video.play(); }catch(playErr){ console.warn('video.play warning',playErr); }
+      if(!video.videoWidth){ await new Promise(r=>setTimeout(r,500)); }
+      await loadCameraList();
+      ui.loadingError.textContent='Camera started. Loading body tracking...';
+      return;
+    }catch(err){ lastErr=err; console.warn('Camera attempt failed',constraints,err); }
+  }
+  throw lastErr || new Error('Unable to start camera.');
+}
 async function setupPose(){pose=new Pose({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`}); pose.setOptions({modelComplexity:1,smoothLandmarks:true,enableSegmentation:true,smoothSegmentation:true,minDetectionConfidence:.55,minTrackingConfidence:.55}); pose.onResults(r=>{latestLandmarks=r.poseLandmarks||null; latestMask=r.segmentationMask||null;});}
-async function startGame(){ui.startError.textContent=''; showOnly('loading'); status='loading'; try{syncSettings(); await startCamera(); await setupPose(); resetGame(); showOnly(null); status='playing'; timerId=setInterval(tickTimer,1000); gameLoop();}catch(err){console.error(err); status='idle'; showOnly('start'); ui.startError.textContent=cameraErrorMessage(err);}}
+async function startGame(){
+  ui.startError.textContent='';
+  ui.loadingError.textContent='';
+  if(ui.cameraWarning) ui.cameraWarning.style.display='none';
+  showOnly('loading'); status='loading';
+  try{
+    syncSettings();
+    await startCamera();
+    await setupPose();
+    resetGame();
+    showOnly(null);
+    status='playing';
+    timerId=setInterval(tickTimer,1000);
+    gameLoop();
+  }catch(err){
+    console.error(err);
+    status='idle'; showOnly('start');
+    const msg=cameraErrorMessage(err);
+    ui.startError.textContent=msg;
+    if(ui.cameraWarning){ui.cameraWarning.textContent=msg;ui.cameraWarning.style.display='block';}
+  }
+}
 function resetGame(){score=0;displayScore=0;points=0;streak=0;bestStreak=0;saves=0;misses=0;level=1;totalTime=settings.length;timeLeft=totalTime;particles=[];flash=0;shotDelay=35;message={text:'PROTECT THE GOAL!',ttl:1600,color:'#8cff4f'};ball=createBall();}
 function tickTimer(){if(status!=='playing')return; timeLeft--; const progress=(totalTime-timeLeft)/totalTime; const maxLevel=settings.difficulty==='easy'?5:settings.difficulty==='normal'?7:9; level=Math.max(1,Math.min(maxLevel,1+Math.floor(progress*maxLevel))); if(timeLeft<=0)endGame();}
 function getShotTarget(){const zones=[{x:430,y:250,label:'TOP LEFT'},{x:640,y:220,label:'TOP CENTER'},{x:850,y:250,label:'TOP RIGHT'},{x:420,y:420,label:'LOW LEFT'},{x:640,y:420,label:'CENTER'},{x:860,y:420,label:'LOW RIGHT'},{x:500,y:555,label:'GROUND LEFT'},{x:780,y:555,label:'GROUND RIGHT'}];return zones[Math.floor(Math.random()*zones.length)];}
@@ -109,7 +175,7 @@ async function gameLoop(now=0){if(status!=='playing')return; animationId=request
 function getRank(){if(score>=45)return'Legend';if(score>=28)return'All-Star';if(score>=14)return'Pro';return'Rookie';}
 function endGame(){status='over';clearInterval(timerId);cancelAnimationFrame(animationId);highScore=Math.max(highScore,score);localStorage.setItem('goalieHighScore',highScore);ui.finalScore.textContent=score;ui.finalStreak.textContent=bestStreak;ui.finalRank.textContent=getRank();showOnly('over');}
 function restartGame(){clearInterval(timerId);cancelAnimationFrame(animationId);syncSettings();resetGame();showOnly(null);status='playing';timerId=setInterval(tickTimer,1000);gameLoop();}
-ui.startBtn.addEventListener('click',startGame);ui.playAgainBtn.addEventListener('click',restartGame);showOnly('start');
+ui.startBtn.addEventListener('click',startGame);ui.playAgainBtn.addEventListener('click',restartGame);loadCameraList();showOnly('start');
 </script>
 </body>
 </html>
