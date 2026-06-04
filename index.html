@@ -1,374 +1,579 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pro Goalkeeper Challenge</title>
-    <!-- Load MediaPipe AI Models -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
-    
-    <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #111; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden; }
-        
-        #game-container {
-            position: relative; width: 100vw; height: 100vh;
-            background-color: #333;
-            background-image: url('soccerfifabg.png'); /* YOUR BACKGROUND IMAGE */
-            background-size: cover; background-position: center;
-        }
-
-        /* The actual webcam feed is hidden, we only use it for data */
-        #webcam { display: none; }
-        
-        /* The canvas where we draw the game */
-        #gameCanvas {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2;
-        }
-
-        /* UI Overlays */
-        .overlay {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            display: flex; flex-direction: column; justify-content: center; align-items: center;
-            background: rgba(0,0,0,0.85); z-index: 20; color: white; text-align: center;
-        }
-        #hud {
-            position: absolute; top: 20px; left: 0; width: 100%; z-index: 10;
-            display: flex; justify-content: space-around; pointer-events: none;
-        }
-        .hud-box {
-            background: rgba(0, 0, 0, 0.7); padding: 10px 25px; border-radius: 8px;
-            font-size: 1.8rem; font-weight: bold; color: white; border-bottom: 4px solid #fff;
-        }
-        #timer-box { border-color: #ff9800; }
-        
-        button {
-            padding: 15px 40px; font-size: 1.5rem; font-weight: bold; color: white;
-            background: #4caf50; border: none; border-radius: 8px; cursor: pointer;
-            box-shadow: 0 4px 10px rgba(76, 175, 80, 0.4); transition: 0.2s;
-        }
-        button:hover { background: #45a049; transform: scale(1.05); }
-
-        #debug-log { color: #ff5252; margin-top: 20px; font-weight: bold; max-width: 80%; font-family: monospace; white-space: pre-wrap;}
-        
-        .hidden { display: none !important; }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Goalkeeper Challenge - Gamified Cutout</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 0;
+      background: radial-gradient(circle at center, #102844 0%, #06101d 70%);
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      overflow: hidden;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      color: #fff;
+    }
+    #game-container {
+      position: relative;
+      width: min(100vw, 1280px);
+      aspect-ratio: 16 / 9;
+      max-height: 100vh;
+      overflow: hidden;
+      background: #000;
+      border-radius: 18px;
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.85);
+    }
+    #webcam {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+      opacity: 0;
+      pointer-events: none;
+    }
+    #gameCanvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 2;
+    }
+    .overlay-screen {
+      position: absolute;
+      inset: 0;
+      z-index: 20;
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      background: rgba(3, 10, 20, 0.88);
+      backdrop-filter: blur(12px);
+      padding: 34px;
+    }
+    .overlay-card {
+      width: min(760px, 92%);
+      padding: 44px;
+      border-radius: 28px;
+      background: linear-gradient(180deg, rgba(17, 31, 55, .92), rgba(4, 10, 20, .94));
+      border: 2px solid rgba(255, 255, 255, .16);
+      box-shadow: 0 30px 80px rgba(0,0,0,.5);
+    }
+    .overlay-card h1 {
+      margin: 0 0 12px;
+      font-size: clamp(2.3rem, 5vw, 4.5rem);
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+    .overlay-card p {
+      margin: 10px auto;
+      font-size: 1.35rem;
+      line-height: 1.45;
+      color: rgba(255,255,255,.88);
+    }
+    .action-btn {
+      margin-top: 30px;
+      padding: 20px 44px;
+      font-size: 1.25rem;
+      font-weight: 900;
+      color: #07101d;
+      background: linear-gradient(135deg, #8cff4f, #34d5ff);
+      border: 0;
+      border-radius: 18px;
+      cursor: pointer;
+      text-transform: uppercase;
+      box-shadow: 0 10px 26px rgba(52, 213, 255, .28), inset 0 -3px 0 rgba(0,0,0,.18);
+      transition: transform .15s ease, filter .15s ease;
+    }
+    .action-btn:hover { transform: translateY(-3px); filter: brightness(1.06); }
+    .error-msg {
+      color: #ff7777;
+      margin-top: 20px;
+      font-weight: 700;
+      font-size: 1.05rem;
+      max-width: 850px;
+      line-height: 1.4;
+    }
+    #loading-screen, #game-over-screen { display: none; }
+    #game-over-screen h1 { color: #ffcf47; }
+  </style>
 </head>
 <body>
+  <div id="game-container">
+    <video id="webcam" autoplay playsinline muted></video>
+    <canvas id="gameCanvas"></canvas>
 
-    <div id="game-container">
-        <!-- Native Video Element -->
-        <video id="webcam" autoplay playsinline muted></video>
-        <canvas id="gameCanvas"></canvas>
-
-        <!-- Heads Up Display -->
-        <div id="hud" class="hidden">
-            <div class="hud-box">SCORE: <span id="ui-score" style="color:#4caf50;">0</span></div>
-            <div id="timer-box" class="hud-box">TIME: <span id="ui-time">120</span></div>
-            <div class="hud-box">MISSED: <span id="ui-missed" style="color:#f44336;">0</span></div>
-        </div>
-
-        <!-- Start Screen -->
-        <div id="screen-start" class="overlay">
-            <h1 style="font-size: 4rem; margin:0;">GOALKEEPER</h1>
-            <p style="font-size: 1.5rem;">Block the balls with your body. You have 2 minutes.</p>
-            <button id="btn-start">Grant Camera & Play</button>
-            <p id="debug-log"></p>
-        </div>
-
-        <!-- Loading Screen -->
-        <div id="screen-loading" class="overlay hidden">
-            <h2>Warming up AI...</h2>
-            <p>Please stand back so the camera can see your whole body.</p>
-        </div>
-
-        <!-- Game Over Screen -->
-        <div id="screen-gameover" class="overlay hidden">
-            <h1 style="color: #f44336; font-size: 4rem; margin:0;">MATCH OVER</h1>
-            <h2>Final Score: <span id="final-score">0</span></h2>
-            <h2>Goals Missed: <span id="final-missed">0</span></h2>
-            <button id="btn-restart" style="margin-top:20px;">Play Again</button>
-        </div>
+    <div id="start-screen" class="overlay-screen">
+      <div class="overlay-card">
+        <h1>Goalkeeper Challenge</h1>
+        <p>Use only your glowing hands and feet to block the shots.</p>
+        <p>Step back so the camera can see your full body.</p>
+        <button id="start-btn" class="action-btn">Grant Camera & Play</button>
+        <div id="start-error" class="error-msg"></div>
+      </div>
     </div>
 
+    <div id="loading-screen" class="overlay-screen">
+      <div class="overlay-card">
+        <h1>Warming Up</h1>
+        <p>Loading camera and AI body tracking...</p>
+        <div id="loading-error" class="error-msg"></div>
+      </div>
+    </div>
+
+    <div id="game-over-screen" class="overlay-screen">
+      <div class="overlay-card">
+        <h1>Game Over</h1>
+        <p>Final Score: <strong id="final-score">0</strong></p>
+        <p>Best Streak: <strong id="final-streak">0</strong></p>
+        <p>Rank: <strong id="final-rank">Rookie</strong></p>
+        <button id="play-again-btn" class="action-btn">Play Again</button>
+      </div>
+    </div>
+  </div>
+
 <script>
-    // --- System Variables ---
-    const video = document.getElementById('webcam');
-    const canvas = document.getElementById('gameCanvas');
-    const ctx = canvas.getContext('2d');
-    const debugLog = document.getElementById('debug-log');
-    
-    // Screens
-    const screenStart = document.getElementById('screen-start');
-    const screenLoading = document.getElementById('screen-loading');
-    const screenGameOver = document.getElementById('screen-gameover');
-    const hud = document.getElementById('hud');
+const video = document.getElementById('webcam');
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const ui = {
+  startScreen: document.getElementById('start-screen'),
+  loadingScreen: document.getElementById('loading-screen'),
+  gameOver: document.getElementById('game-over-screen'),
+  startBtn: document.getElementById('start-btn'),
+  playAgainBtn: document.getElementById('play-again-btn'),
+  startError: document.getElementById('start-error'),
+  loadingError: document.getElementById('loading-error'),
+  finalScore: document.getElementById('final-score'),
+  finalStreak: document.getElementById('final-streak'),
+  finalRank: document.getElementById('final-rank')
+};
 
-    // UI Elements
-    const uiScore = document.getElementById('ui-score');
-    const uiTime = document.getElementById('ui-time');
-    const uiMissed = document.getElementById('ui-missed');
+const W = 1280, H = 720;
+canvas.width = W; canvas.height = H;
 
-    // Offscreen canvas for AI player masking
-    const maskCanvas = document.createElement('canvas');
-    const maskCtx = maskCanvas.getContext('2d');
+let pose, stream, animationId, timerId;
+let latestLandmarks = null;
+let latestMask = null;
+let lastPoseSend = 0;
+let status = 'idle';
+let score = 0, points = 0, streak = 0, bestStreak = 0, saves = 0, misses = 0;
+let level = 1, timeLeft = 120, highScore = Number(localStorage.getItem('goalieHighScore') || 0);
+let message = { text: 'READY?', ttl: 1400, color: '#ffcf47' };
+let particles = [];
+let flash = 0;
+let shotDelay = 0;
+let ball = createBall();
 
-    // Generate Soccer Ball Image
-    const ballImg = new Image();
-    ballImg.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="48" fill="%23fff" stroke="%23000" stroke-width="4"/><path d="M50 20 L30 40 L40 70 L60 70 L70 40 Z" fill="%23111"/><line x1="50" y1="20" x2="50" y2="2" stroke="%23111" stroke-width="5"/><line x1="30" y1="40" x2="5" y2="30" stroke="%23111" stroke-width="5"/><line x1="70" y1="40" x2="95" y2="30" stroke="%23111" stroke-width="5"/><line x1="40" y1="70" x2="25" y2="95" stroke="%23111" stroke-width="5"/><line x1="60" y1="70" x2="75" y2="95" stroke="%23111" stroke-width="5"/></svg>';
+const protectorKeys = ['leftWrist','rightWrist','leftIndex','rightIndex','leftAnkle','rightAnkle','leftFoot','rightFoot'];
+const landmarkIndex = {
+  leftWrist: 15, rightWrist: 16, leftIndex: 19, rightIndex: 20,
+  leftAnkle: 27, rightAnkle: 28, leftFoot: 31, rightFoot: 32,
+  leftShoulder: 11, rightShoulder: 12, leftHip: 23, rightHip: 24
+};
 
-    // --- Game State ---
-    let state = {
-        status: 'start', // start, loading, playing, gameover
-        score: 0,
-        missed: 0,
-        timeLeft: 120,
-        timerInterval: null,
-        playerCutout: null,
-        contactPoints: [] 
-    };
+function showOnly(screen) {
+  ui.startScreen.style.display = screen === 'start' ? 'flex' : 'none';
+  ui.loadingScreen.style.display = screen === 'loading' ? 'flex' : 'none';
+  ui.gameOver.style.display = screen === 'over' ? 'flex' : 'none';
+}
 
-    let ball = {
-        active: false, phase: 'none', 
-        x: 0, y: 0, radius: 5,
-        speedX: 0, speedY: 0,
-        growth: 0, rotation: 0
-    };
+function cameraErrorMessage(err) {
+  const base = err && err.name ? err.name : 'Camera error';
+  if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+    return `${base}: Camera access requires HTTPS. Use the https:// GitHub Pages link, not file:// or an unsecured link.`;
+  }
+  if (base === 'NotAllowedError' || base === 'PermissionDeniedError') return 'Camera permission was blocked. Click the lock/camera icon in Chrome, allow Camera, then refresh.';
+  if (base === 'NotFoundError' || base === 'DevicesNotFoundError') return 'No camera was found. Make sure the webcam or OBS Virtual Camera is connected.';
+  if (base === 'NotReadableError' || base === 'TrackStartError') return 'The camera is already being used by another app. Close Zoom/OBS/Teams/other tabs, then refresh.';
+  return `${base}: ${err.message || 'Unable to start camera.'}`;
+}
 
-    let poseAI = null;
+async function startCamera() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('getUserMedia is not supported. Use Chrome or Edge.');
+  stream = await navigator.mediaDevices.getUserMedia({
+    video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+    audio: false
+  });
+  video.srcObject = stream;
+  await video.play();
+  await new Promise(resolve => video.readyState >= 2 ? resolve() : video.onloadedmetadata = resolve);
+}
 
-    // --- Logger ---
-    function logError(msg) {
-        console.error(msg);
-        debugLog.innerHTML += `<br>ERROR: ${msg}`;
+async function setupPose() {
+  pose = new Pose({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
+  pose.setOptions({
+    modelComplexity: 1,
+    smoothLandmarks: true,
+    enableSegmentation: true,
+    smoothSegmentation: true,
+    minDetectionConfidence: 0.55,
+    minTrackingConfidence: 0.55
+  });
+  pose.onResults(results => {
+    latestLandmarks = results.poseLandmarks || null;
+    latestMask = results.segmentationMask || null;
+  });
+}
+
+async function startGame() {
+  ui.startError.textContent = '';
+  showOnly('loading');
+  status = 'loading';
+  try {
+    await startCamera();
+    await setupPose();
+    resetGame();
+    showOnly(null);
+    status = 'playing';
+    timerId = setInterval(tickTimer, 1000);
+    gameLoop();
+  } catch (err) {
+    console.error(err);
+    status = 'idle';
+    showOnly('start');
+    ui.startError.textContent = cameraErrorMessage(err);
+  }
+}
+
+function resetGame() {
+  score = 0; points = 0; streak = 0; bestStreak = 0; saves = 0; misses = 0;
+  level = 1; timeLeft = 120; particles = []; flash = 0; shotDelay = 35;
+  message = { text: 'PROTECT THE GOAL!', ttl: 1600, color: '#8cff4f' };
+  ball = createBall();
+}
+
+function tickTimer() {
+  if (status !== 'playing') return;
+  timeLeft--;
+  level = Math.min(6, 1 + Math.floor((120 - timeLeft) / 22));
+  if (timeLeft <= 0) endGame();
+}
+
+function createBall() {
+  const target = getShotTarget();
+  const startX = W / 2 + (Math.random() - .5) * 120;
+  const startY = H + 105;
+  const frames = Math.max(48 - level * 4, 24);
+  return {
+    x: startX, y: startY, px: startX, py: startY,
+    vx: (target.x - startX) / frames,
+    vy: (target.y - startY) / frames,
+    r: 54,
+    spin: 0,
+    state: 'incoming',
+    targetLabel: target.label,
+    trail: []
+  };
+}
+
+function getShotTarget() {
+  const zones = [
+    { x: 430, y: 250, label: 'TOP LEFT' }, { x: 640, y: 220, label: 'TOP CENTER' }, { x: 850, y: 250, label: 'TOP RIGHT' },
+    { x: 420, y: 420, label: 'LOW LEFT' }, { x: 640, y: 420, label: 'CENTER' }, { x: 860, y: 420, label: 'LOW RIGHT' },
+    { x: 500, y: 555, label: 'GROUND LEFT' }, { x: 780, y: 555, label: 'GROUND RIGHT' }
+  ];
+  return zones[Math.floor(Math.random() * zones.length)];
+}
+
+function pt(name) {
+  if (!latestLandmarks) return null;
+  const p = latestLandmarks[landmarkIndex[name]];
+  if (!p || (p.visibility !== undefined && p.visibility < 0.35)) return null;
+  return { x: (1 - p.x) * W, y: p.y * H, v: p.visibility || 1, name };
+}
+
+function protectorPoints() {
+  return protectorKeys.map(pt).filter(Boolean);
+}
+
+function getBodyBounds() {
+  if (!latestLandmarks) return null;
+  const valid = latestLandmarks.filter(p => p && (p.visibility === undefined || p.visibility > .35));
+  if (!valid.length) return null;
+  const xs = valid.map(p => (1 - p.x) * W);
+  const ys = valid.map(p => p.y * H);
+  return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) };
+}
+
+function updateGame(dt) {
+  if (message.ttl > 0) message.ttl -= dt;
+  if (flash > 0) flash -= dt;
+  updateParticles(dt);
+
+  if (shotDelay > 0) {
+    shotDelay--;
+    if (shotDelay <= 0) ball = createBall();
+    return;
+  }
+
+  ball.px = ball.x; ball.py = ball.y;
+  ball.trail.push({ x: ball.x, y: ball.y, r: ball.r });
+  if (ball.trail.length > 9) ball.trail.shift();
+  ball.x += ball.vx;
+  ball.y += ball.vy;
+  ball.spin += .18;
+  ball.r = Math.max(24, ball.r * .988);
+
+  if (ball.state === 'incoming') checkBlock();
+
+  if (ball.state === 'deflected') {
+    ball.vy += .10;
+    if (ball.x < -160 || ball.x > W + 160 || ball.y < -160 || ball.y > H + 180) {
+      shotDelay = 32;
     }
+    return;
+  }
 
-    // --- Core Game Logic ---
-    function spawnBall() {
-        if (state.status !== 'playing') return;
-        ball.active = true;
-        ball.phase = 'incoming';
-        ball.radius = 5; 
-        
-        ball.x = (canvas.width / 2) + (Math.random() - 0.5) * 200;
-        ball.y = canvas.height * 0.45; 
-        
-        ball.speedX = (Math.random() - 0.5) * 8; 
-        let speedMult = state.timeLeft < 60 ? 1.5 : 1.0; 
-        ball.speedY = (4 + Math.random() * 3) * speedMult; 
-        ball.growth = 0.15; 
-        ball.rotation = 0;
+  const inGoalMouth = ball.y < 595 && ball.x > 285 && ball.x < 995;
+  if (ball.y < 145 || (ball.r < 28 && inGoalMouth)) {
+    misses++;
+    streak = 0;
+    message = { text: 'GOAL!', ttl: 1000, color: '#ff4747' };
+    burst(ball.x, ball.y, '#ff4747', 24);
+    flash = 250;
+    shotDelay = 38;
+    ball.state = 'scored';
+  }
+}
+
+function checkBlock() {
+  const points = protectorPoints();
+  for (const p of points) {
+    const radius = p.name.includes('Foot') || p.name.includes('Ankle') ? 52 : 58;
+    const d = Math.hypot(ball.x - p.x, ball.y - p.y);
+    if (d < ball.r + radius) {
+      const nx = (ball.x - p.x) / Math.max(d, 1);
+      const ny = (ball.y - p.y) / Math.max(d, 1);
+      const speed = Math.max(12, Math.hypot(ball.vx, ball.vy) * 1.15);
+      ball.vx = nx * speed + (Math.random() - .5) * 5;
+      ball.vy = ny * speed - 4 - Math.random() * 4;
+      ball.state = 'deflected';
+      ball.r *= 1.04;
+      saves++; streak++; bestStreak = Math.max(bestStreak, streak);
+      const gain = 100 + streak * 15 + level * 10;
+      score += gain; points += gain;
+      message = { text: streak >= 3 ? `COMBO x${streak}!` : 'SAVE!', ttl: 900, color: '#8cff4f' };
+      burst(ball.x, ball.y, '#8cff4f', 34);
+      return;
     }
+  }
+}
 
-    function updatePhysics() {
-        if (state.status !== 'playing') return;
+function burst(x, y, color, count) {
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const s = 2 + Math.random() * 9;
+    particles.push({ x, y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 450 + Math.random()*400, age: 0, color, size: 3 + Math.random()*5 });
+  }
+}
 
-        if (!ball.active) {
-            ball.active = true;
-            setTimeout(spawnBall, 1000);
-            return;
-        }
+function updateParticles(dt) {
+  particles.forEach(p => { p.age += dt; p.x += p.vx; p.y += p.vy; p.vy += .08; });
+  particles = particles.filter(p => p.age < p.life);
+}
 
-        if (ball.phase === 'incoming') {
-            ball.x += ball.speedX;
-            ball.y += ball.speedY;
-            ball.radius += ball.growth * ball.speedY;
-            ball.rotation += 0.1;
+function drawGame() {
+  drawStadium();
+  drawGoal();
+  drawPlayerCutout();
+  drawLimbHighlights();
+  drawBall();
+  drawParticles();
+  drawHUD();
+  drawMessage();
+  if (flash > 0) {
+    ctx.fillStyle = `rgba(255, 70, 70, ${Math.min(.22, flash/1000)})`;
+    ctx.fillRect(0,0,W,H);
+  }
+}
 
-            let hit = false;
-            let hitX = 0;
-            
-            for (let i = 0; i < state.contactPoints.length; i++) {
-                let pt = state.contactPoints[i];
-                if (!pt) continue;
-                let dist = Math.hypot(ball.x - pt.x, ball.y - pt.y);
-                if (dist < ball.radius + 40) { 
-                    hit = true;
-                    hitX = pt.x;
-                    break;
-                }
-            }
+function drawStadium() {
+  const sky = ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#123f7a'); sky.addColorStop(.45,'#0a1930'); sky.addColorStop(.46,'#0b542e'); sky.addColorStop(1,'#0b321b');
+  ctx.fillStyle = sky; ctx.fillRect(0,0,W,H);
 
-            if (hit) {
-                // DEFLECT PHYSICS! Bounce it away
-                ball.phase = 'bouncing';
-                ball.speedY = -(ball.speedY * 0.7); 
-                ball.speedX = (ball.x - hitX) * 0.15; 
-                state.score += 10;
-                uiScore.innerText = state.score;
-            } 
-            else if (ball.y > canvas.height + ball.radius) {
-                state.missed += 1;
-                uiMissed.innerText = state.missed;
-                ball.active = false; 
-            }
+  ctx.fillStyle = 'rgba(255,255,255,.85)';
+  for (let i = 0; i < 5; i++) {
+    const lx = 80 + i * 280;
+    ctx.beginPath(); ctx.arc(lx, 78, 12, 0, Math.PI*2); ctx.fill();
+    const g = ctx.createRadialGradient(lx,78,0,lx,78,150);
+    g.addColorStop(0,'rgba(255,255,255,.45)'); g.addColorStop(1,'rgba(255,255,255,0)');
+    ctx.fillStyle = g; ctx.fillRect(lx-160,0,320,220); ctx.fillStyle = 'rgba(255,255,255,.85)';
+  }
 
-        } else if (ball.phase === 'bouncing') {
-            ball.x += ball.speedX;
-            ball.y += ball.speedY;
-            ball.radius -= ball.growth * Math.abs(ball.speedY); 
-            ball.rotation -= 0.1;
+  ctx.fillStyle = 'rgba(3, 6, 12, .46)';
+  ctx.beginPath(); ctx.ellipse(W/2, 238, 650, 130, 0, 0, Math.PI*2); ctx.fill();
+  for (let i=0;i<520;i++) {
+    ctx.fillStyle = `rgba(${120+Math.random()*120},${120+Math.random()*120},${120+Math.random()*120},.22)`;
+    ctx.fillRect(Math.random()*W, 170+Math.random()*170, 2, 2);
+  }
 
-            if (ball.radius < 2 || ball.y < 0 || ball.x < 0 || ball.x > canvas.width) {
-                ball.active = false; 
-            }
-        }
-    }
+  ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.moveTo(0, 665); ctx.lineTo(W, 665); ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,.33)'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(210,665); ctx.lineTo(480,400); ctx.moveTo(1070,665); ctx.lineTo(800,400); ctx.stroke();
+}
 
-    // --- Drawing Loop ---
-    function draw() {
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
-        maskCanvas.width = canvas.width;
-        maskCanvas.height = canvas.height;
+function drawGoal() {
+  const x=290, y=145, w=700, h=430;
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,.22)'; ctx.fillRect(x+10,y+18,w-20,h-10);
+  ctx.strokeStyle = 'rgba(255,255,255,.90)'; ctx.lineWidth = 12; ctx.strokeRect(x,y,w,h);
+  ctx.lineWidth = 1.4; ctx.strokeStyle = 'rgba(255,255,255,.46)';
+  for (let gx=x; gx<=x+w; gx+=32) { ctx.beginPath(); ctx.moveTo(gx,y); ctx.lineTo(gx,y+h); ctx.stroke(); }
+  for (let gy=y; gy<=y+h; gy+=28) { ctx.beginPath(); ctx.moveTo(x,gy); ctx.lineTo(x+w,gy); ctx.stroke(); }
+  ctx.restore();
+}
 
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+function drawPlayerCutout() {
+  if (!video.videoWidth || !latestMask) return;
+  const bounds = getBodyBounds();
+  ctx.save();
+  ctx.globalAlpha = .92;
+  ctx.drawImage(latestMask, 0, 0, W, H);
+  ctx.globalCompositeOperation = 'source-in';
+  ctx.translate(W, 0); ctx.scale(-1, 1);
+  ctx.drawImage(video, 0, 0, W, H);
+  ctx.globalCompositeOperation = 'destination-over';
+  if (bounds) {
+    const glow = ctx.createRadialGradient((bounds.minX+bounds.maxX)/2, (bounds.minY+bounds.maxY)/2, 10, (bounds.minX+bounds.maxX)/2, (bounds.minY+bounds.maxY)/2, 310);
+    glow.addColorStop(0, 'rgba(52,213,255,.18)'); glow.addColorStop(1, 'rgba(52,213,255,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(bounds.minX-130, bounds.minY-130, (bounds.maxX-bounds.minX)+260, (bounds.maxY-bounds.minY)+260);
+  }
+  ctx.restore();
+}
 
-        if (state.playerCutout && state.status === 'playing') {
-            ctx.save();
-            ctx.translate(canvas.width, 0);
-            ctx.scale(-1, 1);
-            ctx.drawImage(state.playerCutout, 0, 0, canvas.width, canvas.height);
-            ctx.restore();
-        }
+function drawLimbHighlights() {
+  const points = protectorPoints();
+  points.forEach(p => {
+    const foot = p.name.includes('Foot') || p.name.includes('Ankle');
+    const r = foot ? 44 : 48;
+    const grad = ctx.createRadialGradient(p.x,p.y,8,p.x,p.y,r);
+    grad.addColorStop(0,'rgba(140,255,79,.85)');
+    grad.addColorStop(.45,'rgba(140,255,79,.32)');
+    grad.addColorStop(1,'rgba(140,255,79,0)');
+    ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle = 'rgba(140,255,79,.95)'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.arc(p.x,p.y,foot?30:33,0,Math.PI*2); ctx.stroke();
+  });
+}
 
-        if (ball.active && ball.phase !== 'none') {
-            ctx.save();
-            ctx.translate(ball.x, ball.y);
-            ctx.rotate(ball.rotation);
-            ctx.drawImage(ballImg, -ball.radius, -ball.radius, ball.radius * 2, ball.radius * 2);
-            ctx.restore();
-        }
+function drawBall() {
+  ball.trail.forEach((t, i) => {
+    ctx.globalAlpha = i / ball.trail.length * .34;
+    ctx.fillStyle = ball.state === 'deflected' ? '#8cff4f' : '#ffae35';
+    ctx.beginPath(); ctx.arc(t.x, t.y, t.r * (i/ball.trail.length), 0, Math.PI*2); ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+  ctx.save();
+  ctx.translate(ball.x, ball.y); ctx.rotate(ball.spin);
+  const g = ctx.createRadialGradient(-ball.r*.35, -ball.r*.35, 4, 0, 0, ball.r);
+  g.addColorStop(0, '#ffffff'); g.addColorStop(.7, '#f4f4f4'); g.addColorStop(1, '#c9c9c9');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0,0,ball.r,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#111';
+  for (let i=0;i<5;i++) { ctx.rotate(Math.PI*2/5); ctx.beginPath(); ctx.arc(ball.r*.38,0,ball.r*.16,0,Math.PI*2); ctx.fill(); }
+  ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.restore();
+}
 
-        if (state.status === 'playing') {
-            updatePhysics();
-        }
+function drawParticles() {
+  particles.forEach(p => {
+    const a = 1 - p.age / p.life;
+    ctx.globalAlpha = a;
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.size*a,0,Math.PI*2); ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+}
 
-        requestAnimationFrame(draw);
-    }
+function panel(x,y,w,h) {
+  ctx.save();
+  ctx.fillStyle = 'rgba(5,12,25,.75)';
+  ctx.strokeStyle = 'rgba(255,255,255,.20)'; ctx.lineWidth = 2;
+  roundRect(x,y,w,h,14); ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+function roundRect(x,y,w,h,r) {
+  ctx.beginPath(); ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r); ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h); ctx.lineTo(x+r,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r); ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y); ctx.closePath();
+}
+function label(text,x,y,size=22,color='#fff',align='left') {
+  ctx.font = `900 ${size}px Segoe UI, Arial`; ctx.fillStyle = color; ctx.textAlign = align; ctx.textBaseline = 'middle';
+  ctx.shadowColor = 'rgba(0,0,0,.8)'; ctx.shadowBlur = 5; ctx.fillText(text,x,y); ctx.shadowBlur = 0;
+}
 
-    // --- MediaPipe AI Processing ---
-    function onPoseResults(results) {
-        if (state.status === 'loading') {
-            state.status = 'playing';
-            screenLoading.classList.add('hidden');
-            hud.classList.remove('hidden');
-            startTimer();
-            spawnBall();
-        }
+function drawHUD() {
+  panel(18,14,200,72); label('★',42,50,42,'#ffcf47'); label(String(score),96,42,34,'#fff'); label('SCORE',96,68,18,'rgba(255,255,255,.8)');
+  panel(232,14,190,72); label('STREAK',252,38,19); label(String(streak),358,44,40,'#ff9e35','center'); label('BEST: '+bestStreak,252,66,17,'rgba(255,255,255,.8)');
+  panel(486,12,308,88); label('TIME',640,34,20,'#fff','center'); label(formatTime(timeLeft),640,68,46,'#fff','center');
+  ctx.fillStyle = 'rgba(0,0,0,.55)'; roundRect(520,86,240,14,7); ctx.fill(); ctx.fillStyle = '#8cff4f'; roundRect(520,86,240*(timeLeft/120),14,7); ctx.fill();
+  panel(818,14,170,72); label('LEVEL',903,38,19,'#fff','center'); label(String(level),903,68,38,'#fff','center');
+  panel(1006,14,250,72); label('HIGH SCORE:',1030,38,18); label(String(Math.max(highScore,score)),1160,42,30,'#fff','center'); label('POINTS '+points,1030,68,18,'#ffcf47');
 
-        if (results.segmentationMask) {
-            maskCtx.save();
-            maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
-            maskCtx.drawImage(results.segmentationMask, 0, 0, maskCanvas.width, maskCanvas.height);
-            maskCtx.globalCompositeOperation = 'source-in';
-            maskCtx.drawImage(results.image, 0, 0, maskCanvas.width, maskCanvas.height);
-            maskCtx.restore();
-            state.playerCutout = maskCanvas;
-        }
+  panel(22,118,206,236); label('HOW TO PLAY',125,148,20,'#fff','center');
+  label('HANDS',92,202,24,'#8cff4f'); label('block high shots',92,230,17,'#fff');
+  label('FEET',92,286,24,'#8cff4f'); label('block low shots',92,314,17,'#fff');
+  label('Only glowing',92,344,17,'#ff7777'); label('hands/feet count',92,366,17,'#ff7777');
+  drawIconHand(58,206); drawIconFoot(58,290);
 
-        if (results.poseLandmarks) {
-            const w = canvas.width;
-            const h = canvas.height;
-            state.contactPoints = [];
-            
-            const addPoint = (index) => {
-                let lm = results.poseLandmarks[index];
-                if (lm && lm.visibility > 0.5) {
-                    // Coordinates inverted to match visual mirror
-                    state.contactPoints.push({ x: (1 - lm.x) * w, y: lm.y * h });
-                }
-            };
-            [0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 31, 32].forEach(addPoint);
-        }
-    }
+  panel(1056,128,196,90); label('NEXT SHOT',1154,154,18,'#fff','center'); label(ball.targetLabel || 'READY',1154,190,20,'#ffcf47','center');
+  panel(1030,526,202,96); label('COMBO',1131,552,24,'#ffcf47','center'); label('x'+Math.max(1,streak),1131,595,54,'#fff','center');
+  panel(1060,238,170,82); label('SAVES',1145,262,17,'#8cff4f','center'); label(`${saves}`,1110,294,34,'#fff','center'); label('MISSES',1188,262,17,'#ff7777','center'); label(`${misses}`,1188,294,34,'#fff','center');
+}
+function drawIconHand(x,y) { ctx.fillStyle='#8cff4f'; ctx.beginPath(); ctx.arc(x,y,18,0,Math.PI*2); ctx.fill(); }
+function drawIconFoot(x,y) { ctx.fillStyle='#8cff4f'; ctx.fillRect(x-18,y-6,38,22); ctx.beginPath(); ctx.arc(x+20,y+5,13,0,Math.PI*2); ctx.fill(); }
+function formatTime(t) { const m = Math.floor(t/60); const s = String(t%60).padStart(2,'0'); return `${m}:${s}`; }
+function drawMessage() {
+  if (message.ttl <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = Math.min(1, message.ttl / 350);
+  label(message.text, W/2, 122, 48, message.color, 'center');
+  ctx.restore();
+}
 
-    // --- Native Camera Loop ---
-    async function startCameraLoop() {
-        return new Promise((resolve) => {
-            video.addEventListener('loadeddata', () => {
-                const tick = async () => {
-                    if (state.status === 'playing' || state.status === 'loading') {
-                        try {
-                            await poseAI.send({ image: video });
-                        } catch (e) {
-                            console.warn("AI Frame Skip:", e);
-                        }
-                    }
-                    requestAnimationFrame(tick);
-                };
-                tick();
-                resolve();
-            });
-        });
-    }
+async function gameLoop(now = 0) {
+  if (status !== 'playing') return;
+  animationId = requestAnimationFrame(gameLoop);
+  if (pose && video.readyState >= 2 && now - lastPoseSend > 33) {
+    lastPoseSend = now;
+    try { await pose.send({ image: video }); } catch (err) { console.warn('Pose frame skipped', err); }
+  }
+  updateGame(16.7);
+  drawGame();
+}
 
-    // --- Flow Control Functions ---
-    function startTimer() {
-        if (state.timerInterval) clearInterval(state.timerInterval);
-        state.timerInterval = setInterval(() => {
-            state.timeLeft--;
-            uiTime.innerText = state.timeLeft;
-            
-            if (state.timeLeft <= 0) {
-                clearInterval(state.timerInterval);
-                state.status = 'over';
-                hud.classList.add('hidden');
-                screenGameOver.classList.remove('hidden');
-                document.getElementById('final-score').innerText = state.score;
-                document.getElementById('final-missed').innerText = state.missed;
-            }
-        }, 1000);
-    }
+function getRank() {
+  if (score >= 9000) return 'Legend';
+  if (score >= 6000) return 'All-Star';
+  if (score >= 3000) return 'Pro';
+  return 'Rookie';
+}
+function endGame() {
+  status = 'over';
+  clearInterval(timerId); cancelAnimationFrame(animationId);
+  highScore = Math.max(highScore, score); localStorage.setItem('goalieHighScore', highScore);
+  ui.finalScore.textContent = score; ui.finalStreak.textContent = bestStreak; ui.finalRank.textContent = getRank();
+  showOnly('over');
+}
+function restartGame() {
+  clearInterval(timerId); cancelAnimationFrame(animationId);
+  resetGame(); showOnly(null); status='playing';
+  timerId = setInterval(tickTimer, 1000); gameLoop();
+}
 
-    async function initSystem() {
-        debugLog.innerText = "Requesting camera access...";
-        
-        try {
-            // 1. Native Camera Request
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { width: 1280, height: 720, facingMode: "user" } 
-            });
-            video.srcObject = stream;
-            
-            screenStart.classList.add('hidden');
-            screenLoading.classList.remove('hidden');
-
-            // 2. Initialize MediaPipe
-            poseAI = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
-            poseAI.setOptions({
-                modelComplexity: 1, 
-                smoothLandmarks: true, 
-                enableSegmentation: true,
-                smoothSegmentation: true, 
-                minDetectionConfidence: 0.5, 
-                minTrackingConfidence: 0.5
-            });
-            poseAI.onResults(onPoseResults);
-
-            // 3. Start processing loop
-            await startCameraLoop();
-
-        } catch (err) {
-            logError(err.name + ": " + err.message);
-        }
-    }
-
-    // --- Setup Listeners ---
-    document.getElementById('start-btn').addEventListener('click', initSystem);
-    
-    document.getElementById('play-again-btn').addEventListener('click', () => {
-        screenGameOver.classList.add('hidden');
-        state.score = 0; state.missed = 0; state.timeLeft = 120;
-        uiScore.innerText = "0"; uiMissed.innerText = "0";
-        state.status = 'playing';
-        hud.classList.remove('hidden');
-        startTimer();
-        spawnBall();
-    });
-
-    // Start drawing loop immediately
-    requestAnimationFrame(draw);
-
+ui.startBtn.addEventListener('click', startGame);
+ui.playAgainBtn.addEventListener('click', restartGame);
+showOnly('start');
 </script>
 </body>
 </html>
