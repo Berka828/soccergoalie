@@ -3,9 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Goalkeeper Challenge - Final Fix</title>
+    <title>Goalkeeper Challenge - Robust Version</title>
+    
+    <!-- Load MediaPipe Scripts directly in the head -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+    
     <style>
         body {
             margin: 0; padding: 0; background: #111;
@@ -20,19 +23,23 @@
             background-color: #222;
         }
         
-        /* NO MORE HACKS: The video is fully rendered but placed BEHIND the canvas */
+        /* The video element MUST be present and visible for the camera_utils to work properly, 
+           but we hide it behind the canvas */
         #webcam {
-            position: absolute; top: 0; left: 0; 
+            position: absolute; 
+            top: 0; left: 0; 
             width: 100%; height: 100%;
             object-fit: cover;
-            z-index: 1; /* Sits behind the canvas */
+            z-index: 1; 
+            opacity: 0.01; /* Nearly invisible but still rendering */
+            pointer-events: none;
         }
 
         canvas {
             position: absolute; top: 0; left: 0;
-            width: 100%; height: 100%; z-index: 2; /* Canvas covers the webcam */
+            width: 100%; height: 100%; z-index: 2;
         }
-
+        
         .overlay-screen {
             position: absolute; top: 0; left: 0; right: 0; bottom: 0;
             z-index: 20; color: white; display: flex; flex-direction: column;
@@ -68,7 +75,7 @@
         }
         .action-btn:hover { transform: translateY(-3px); box-shadow: 0 8px 20px rgba(76, 175, 80, 0.6); }
 
-        .error-msg { color: #f44336; margin-top: 20px; font-weight: bold; font-size: 1.2rem; }
+        .error-msg { color: #f44336; margin-top: 20px; font-weight: bold; font-size: 1.2rem; max-width: 80%; word-wrap: break-word;}
         
         #loading-screen, #game-over-screen { display: none; }
         #game-over-screen h1 { font-size: 5rem; margin: 0; color: #f44336; }
@@ -77,20 +84,20 @@
 </head>
 <body>
     <div id="game-container">
+        <!-- Video element MUST have autoplay and playsinline -->
         <video id="webcam" autoplay playsinline muted></video>
-        <canvas id="gameCanvas"></canvas>
+        <canvas id="gameCanvas" width="1280" height="720"></canvas>
 
-        <div id="ui-overlay">
+        <div id="ui-overlay" style="display: none;">
             <div class="ui-box">SCORE: <span id="score">0</span></div>
             <div id="timer-box" class="ui-box">TIME: <span id="time">120</span></div>
             <div class="ui-box">STREAK: <span id="streak">0</span></div>
         </div>
 
-        <!-- Start Screen to bypass browser Autoplay blocks -->
         <div id="start-screen" class="overlay-screen">
             <h1 style="font-size: 3rem; margin-bottom: 10px;">GOALKEEPER CHALLENGE</h1>
             <p style="font-size: 1.5rem;">Defend the goal with your body for 2 minutes!</p>
-            <button id="start-btn" class="action-btn">Grant Camera & Play</button>
+            <button id="start-btn" class="action-btn">Start Camera & Play</button>
             <div id="start-error" class="error-msg"></div>
         </div>
 
@@ -109,12 +116,15 @@
     </div>
 
 <script>
+    // 1. Get HTML Elements
     const videoElement = document.getElementById('webcam');
     const canvasElement = document.getElementById('gameCanvas');
     const canvasCtx = canvasElement.getContext('2d');
     
-    // Globally defined to prevent memory leaks
+    // Create offscreen canvas for processing the player cutout
     const offscreenCanvas = document.createElement('canvas');
+    offscreenCanvas.width = 1280;
+    offscreenCanvas.height = 720;
     const offscreenCtx = offscreenCanvas.getContext('2d');
 
     const ui = {
@@ -124,7 +134,8 @@
         timerBox: document.getElementById('timer-box'),
         startScreen: document.getElementById('start-screen'),
         loadingScreen: document.getElementById('loading-screen'),
-        gameOver: document.getElementById('game-over-screen'),
+        gameOverScreen: document.getElementById('game-over-screen'),
+        uiOverlay: document.getElementById('ui-overlay'),
         finalScore: document.getElementById('final-score'),
         finalStreak: document.getElementById('final-streak'),
         startBtn: document.getElementById('start-btn'),
@@ -133,9 +144,10 @@
         loadingError: document.getElementById('loading-error')
     };
 
+    // 2. Game State
     let state = {
         score: 0, streak: 0, bestStreak: 0, timeLeft: 120,
-        gameStatus: 'idle', // idle -> loading -> playing -> over
+        gameStatus: 'idle', // idle, loading, playing, over
         contactPoints: {},
         playerCutout: null,
         particles: [],
@@ -145,8 +157,275 @@
 
     let ball = {};
 
+    // 3. Load Images
     const bgImg = new Image();
     bgImg.src = 'soccerfifabg.png';
 
     const ballImg = new Image();
-    ballImg.src = 'data:image/png;base64,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QfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfgAQfg/AQH8A80G7gAABuN6NjgfNCAgX2VzcXVpbi1kb3dubG9hZHMAiAMBmG9m7H67S8Yg==</p>
+    // SVG Data URI for the soccer ball
+    ballImg.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="48" fill="%23fff" stroke="%23000" stroke-width="3"/><polygon points="50,22 25,40 35,70 65,70 75,40" fill="%23222"/><line x1="50" y1="22" x2="50" y2="2" stroke="%23222" stroke-width="4"/><line x1="25" y1="40" x2="4" y2="30" stroke="%23222" stroke-width="4"/><line x1="75" y1="40" x2="96" y2="30" stroke="%23222" stroke-width="4"/><line x1="35" y1="70" x2="20" y2="92" stroke="%23222" stroke-width="4"/><line x1="65" y1="70" x2="80" y2="92" stroke="%23222" stroke-width="4"/><polygon points="50,2 35,0 65,0" fill="%23222"/><polygon points="4,30 0,45 0,15" fill="%23222"/><polygon points="96,30 100,45 100,15" fill="%23222"/><polygon points="20,92 10,100 40,100" fill="%23222"/><polygon points="80,92 90,100 60,100" fill="%23222"/></svg>';
+
+    // 4. Game Logic Functions
+    function spawnBall() {
+        if (state.gameStatus !== 'playing') return;
+        state.isBallActive = true;
+        ball = {
+            state: 'incoming', 
+            radius: 5, // start small
+            x: 640 + (Math.random() - 0.5) * 300, // Center +/- 150px
+            y: 400, // Horizon line of the background
+            speedX: (Math.random() - 0.5) * 12,
+            speedY: (4.5 + Math.random() * 2) * (state.timeLeft < 60 ? 1.5 : 1), // Faster in last minute
+            sizeGrowth: 0.15, 
+            rotation: 0
+        };
+    }
+
+    function updateGamePhysics() {
+        if (state.gameStatus !== 'playing') return;
+
+        // If no ball, spawn one after a delay
+        if (!state.isBallActive) {
+            state.isBallActive = true; // prevent multiple spawns
+            setTimeout(spawnBall, 1200);
+            return;
+        }
+
+        if (!ball.state) return;
+
+        if (ball.state === 'incoming') {
+            ball.x += ball.speedX;
+            ball.y += ball.speedY;
+            ball.radius += ball.sizeGrowth * ball.speedY;
+            ball.rotation += ball.speedY * 0.05;
+
+            // Collision Detection
+            let saved = false;
+            let hitX = 0;
+            let hitY = 0;
+
+            for (const part in state.contactPoints) {
+                const pt = state.contactPoints[part];
+                if (pt && pt.x && pt.y) {
+                    const dist = Math.hypot(ball.x - pt.x, ball.y - pt.y);
+                    // Hitbox: ball radius + 40px buffer
+                    if (dist < ball.radius + 40) {
+                        saved = true;
+                        hitX = pt.x;
+                        hitY = pt.y;
+                        break;
+                    }
+                }
+            }
+
+            if (saved) {
+                // Ball was blocked!
+                ball.state = 'deflected';
+                // Reverse Y direction (bounce up), reduce speed
+                ball.speedY = -(ball.speedY * 0.6); 
+                // Add some X velocity based on where it hit relative to the center of the ball
+                ball.speedX += (ball.x - hitX) * 0.1; 
+                
+                state.score += 10 + (state.streak * 2);
+                state.streak++;
+                if (state.streak > state.bestStreak) state.bestStreak = state.streak;
+                triggerFx("#4caf50"); // Green flash
+            } else if (ball.y > 720 + ball.radius) {
+                // Ball passed the screen (Goal)
+                state.streak = 0;
+                triggerFx("#f44336"); // Red flash
+                state.isBallActive = false; // Trigger respawn
+                ball = {};
+            }
+        } else if (ball.state === 'deflected') {
+            // Ball is flying away
+            ball.x += ball.speedX;
+            ball.y += ball.speedY;
+            // Shrink the ball as it flies away
+            ball.radius -= ball.sizeGrowth * Math.abs(ball.speedY) * 1.5; 
+            ball.rotation -= ball.speedY * 0.05;
+
+            // Remove ball when it gets too small or goes off top of screen
+            if (ball.radius < 2 || ball.y < 0) {
+                state.isBallActive = false; // Trigger respawn
+                ball = {};
+            }
+        }
+        updateUI();
+    }
+
+    function drawFrame() {
+        // Clear main canvas
+        canvasCtx.clearRect(0, 0, 1280, 720);
+        
+        // 1. Draw Background
+        if (bgImg.complete) {
+            canvasCtx.drawImage(bgImg, 0, 0, 1280, 720);
+        }
+        
+        // 2. Draw Player Cutout (Mirrored)
+        if (state.playerCutout) {
+            canvasCtx.save();
+            canvasCtx.scale(-1, 1);
+            canvasCtx.translate(-1280, 0);
+            canvasCtx.drawImage(state.playerCutout, 0, 0, 1280, 720);
+            canvasCtx.restore();
+        }
+        
+        // 3. Draw Ball
+        if (ball.state) {
+            canvasCtx.save();
+            canvasCtx.translate(ball.x, ball.y);
+            canvasCtx.rotate(ball.rotation);
+            canvasCtx.drawImage(ballImg, -ball.radius, -ball.radius, ball.radius * 2, ball.radius * 2);
+            canvasCtx.restore();
+        }
+
+        // Loop the drawing and physics
+        if(state.gameStatus === 'playing') {
+            updateGamePhysics();
+        }
+        requestAnimationFrame(drawFrame);
+    }
+
+    // --- MediaPipe AI Logic ---
+    function onResults(results) {
+        // If we get here, the camera and AI are working!
+        if (state.gameStatus === 'loading') {
+            beginGameplay();
+        }
+        
+        // Create the player cutout image
+        offscreenCtx.clearRect(0, 0, 1280, 720);
+        if (results.segmentationMask) {
+            offscreenCtx.drawImage(results.segmentationMask, 0, 0, 1280, 720);
+            offscreenCtx.globalCompositeOperation = 'source-in';
+        }
+        offscreenCtx.drawImage(results.image, 0, 0, 1280, 720);
+        offscreenCtx.globalCompositeOperation = 'source-over'; // Reset
+        state.playerCutout = offscreenCanvas;
+
+        // Extract tracking points (Mirrored X coordinate)
+        if (results.poseLandmarks) {
+            const getCoords = (index) => {
+                const lm = results.poseLandmarks[index];
+                // Mirror the X coordinate so it matches the flipped canvas drawing
+                return { x: (1 - lm.x) * 1280, y: lm.y * 720 };
+            };
+            
+            state.contactPoints = {
+                left_wrist: getCoords(15), right_wrist: getCoords(16), 
+                left_elbow: getCoords(13), right_elbow: getCoords(14), 
+                left_shoulder: getCoords(11), right_shoulder: getCoords(12),
+                head: getCoords(0), 
+                left_knee: getCoords(25), right_knee: getCoords(26),
+                left_foot: getCoords(31), right_foot: getCoords(32)
+            };
+        }
+    }
+
+    // --- Flow Control Functions ---
+    function triggerFx(color) {
+        document.getElementById('game-container').style.outline = `8px solid ${color}`;
+        setTimeout(() => document.getElementById('game-container').style.outline = 'none', 200);
+    }
+    
+    function updateUI() {
+        ui.score.innerText = state.score;
+        ui.streak.innerText = state.streak;
+    }
+
+    function beginGameplay() {
+        state.gameStatus = 'playing';
+        ui.loadingScreen.style.display = 'none';
+        ui.uiOverlay.style.display = 'flex';
+        
+        state.score = 0; state.streak = 0; state.bestStreak = 0; state.timeLeft = 120;
+        state.isBallActive = false;
+        ball = {};
+        
+        ui.time.innerText = state.timeLeft;
+        ui.timerBox.style.borderColor = '#ff9800';
+
+        if (state.gameTimer) clearInterval(state.gameTimer);
+        state.gameTimer = setInterval(() => {
+            state.timeLeft--;
+            ui.time.innerText = state.timeLeft;
+            if (state.timeLeft < 60 && state.timeLeft > 10) ui.timerBox.style.borderColor = '#fdd835';
+            else if (state.timeLeft <= 10) ui.timerBox.style.borderColor = '#e53935';
+            
+            if (state.timeLeft <= 0) endGame();
+        }, 1000);
+    }
+
+    function endGame() {
+        clearInterval(state.gameTimer);
+        state.gameStatus = 'over';
+        state.isBallActive = false;
+        ball = {};
+        ui.uiOverlay.style.display = 'none';
+        ui.finalScore.innerText = state.score;
+        ui.finalStreak.innerText = state.bestStreak;
+        ui.gameOver.style.display = 'flex';
+    }
+
+    async function initializeSystem() {
+        ui.startScreen.style.display = 'none';
+        ui.loadingScreen.style.display = 'flex';
+        ui.loadingError.innerText = "";
+
+        try {
+            // Initialize MediaPipe Pose
+            const pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
+            pose.setOptions({
+                modelComplexity: 1, 
+                smoothLandmarks: true, 
+                enableSegmentation: true,
+                smoothSegmentation: true, 
+                minDetectionConfidence: 0.5, 
+                minTrackingConfidence: 0.5
+            });
+            pose.onResults(onResults);
+
+            // Initialize Camera
+            const camera = new Camera(videoElement, {
+                onFrame: async () => {
+                    await pose.send({ image: videoElement });
+                },
+                width: 1280, height: 720
+            });
+            
+            state.gameStatus = 'loading';
+            await camera.start();
+            
+            // Start the visual render loop immediately
+            requestAnimationFrame(drawFrame);
+
+        } catch (error) {
+            console.error(error);
+            ui.loadingScreen.style.display = 'none';
+            ui.startScreen.style.display = 'flex';
+            ui.startError.innerText = "Error starting camera: " + error.message + ". Please ensure you have a webcam connected and allow permissions.";
+        }
+    }
+
+    // 1. Kick off the visual loop right away so the background draws
+    function drawFrame() {
+        drawGame();
+        requestAnimationFrame(drawFrame);
+    }
+    requestAnimationFrame(drawFrame);
+
+    // 2. Attach button listener
+    ui.startBtn.addEventListener('click', initializeSystem);
+    ui.playAgainBtn.addEventListener('click', () => {
+        ui.gameOver.style.display = 'none';
+        ui.loadingScreen.style.display = 'flex';
+        state.gameStatus = 'loading';
+        // The onResults function will automatically trigger beginGameplay() 
+        // once it processes the next frame.
+    });
+
+</script>
+</body>
+</html>
