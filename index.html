@@ -1,431 +1,248 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Goalkeeper Challenge - Robust Version</title>
-    
-    <!-- Load MediaPipe Scripts directly in the head -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
-    
-    <style>
-        body {
-            margin: 0; padding: 0; background: #111;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            overflow: hidden; display: flex; justify-content: center;
-            align-items: center; height: 100vh;
-        }
-        #game-container {
-            position: relative; width: 1280px; height: 720px;
-            border-radius: 12px; overflow: hidden;
-            box-shadow: 0 20px 50px rgba(0,0,0,0.8);
-            background-color: #222;
-        }
-        
-        /* The video element MUST be present and visible for the camera_utils to work properly, 
-           but we hide it behind the canvas */
-        #webcam {
-            position: absolute; 
-            top: 0; left: 0; 
-            width: 100%; height: 100%;
-            object-fit: cover;
-            z-index: 1; 
-            opacity: 0.01; /* Nearly invisible but still rendering */
-            pointer-events: none;
-        }
-
-        canvas {
-            position: absolute; top: 0; left: 0;
-            width: 100%; height: 100%; z-index: 2;
-        }
-        
-        .overlay-screen {
-            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-            z-index: 20; color: white; display: flex; flex-direction: column;
-            justify-content: center; align-items: center; text-align: center;
-            background: rgba(0,0,0,0.85); backdrop-filter: blur(10px);
-        }
-
-        #ui-overlay {
-            position: absolute; top: 0; left: 0; right: 0;
-            z-index: 10; display: flex; justify-content: space-around;
-            padding-top: 20px; pointer-events: none;
-        }
-
-        .ui-box {
-            background: rgba(0, 0, 0, 0.75); backdrop-filter: blur(8px);
-            padding: 12px 30px; border-radius: 12px;
-            font-weight: 800; font-size: 1.6rem; color: white;
-            border-bottom: 4px solid rgba(255,255,255,0.2);
-            text-shadow: 1px 1px 3px rgba(0,0,0,0.8);
-        }
-
-        #timer-box {
-            font-size: 2rem; padding: 15px 40px;
-            border-bottom-color: #ff9800; transition: border-color 0.5s ease;
-        }
-
-        .action-btn {
-            margin-top: 30px; padding: 20px 50px; font-size: 1.5rem;
-            font-weight: bold; color: white; background: #4caf50;
-            border: none; border-radius: 12px; cursor: pointer;
-            text-transform: uppercase; box-shadow: 0 5px 15px rgba(76, 175, 80, 0.4);
-            transition: all 0.2s ease;
-        }
-        .action-btn:hover { transform: translateY(-3px); box-shadow: 0 8px 20px rgba(76, 175, 80, 0.6); }
-
-        .error-msg { color: #f44336; margin-top: 20px; font-weight: bold; font-size: 1.2rem; max-width: 80%; word-wrap: break-word;}
-        
-        #loading-screen, #game-over-screen { display: none; }
-        #game-over-screen h1 { font-size: 5rem; margin: 0; color: #f44336; }
-        #game-over-screen p { font-size: 2rem; margin: 10px 0; }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Goalkeeper Challenge - Camera Fixed</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+  <style>
+    body { margin:0; padding:0; background:#111; font-family:Segoe UI,Tahoma,sans-serif; overflow:hidden; display:flex; justify-content:center; align-items:center; height:100vh; }
+    #game-container { position:relative; width:1280px; height:720px; border-radius:12px; overflow:hidden; box-shadow:0 20px 50px rgba(0,0,0,.8); background:#000; }
+    #webcam { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; transform:scaleX(-1); z-index:1; }
+    #gameCanvas { position:absolute; inset:0; width:100%; height:100%; z-index:2; }
+    .overlay-screen { position:absolute; inset:0; z-index:20; color:white; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; background:rgba(0,0,0,.86); backdrop-filter:blur(8px); padding:30px; }
+    #ui-overlay { position:absolute; top:0; left:0; right:0; z-index:10; display:flex; justify-content:space-around; padding-top:20px; pointer-events:none; }
+    .ui-box { background:rgba(0,0,0,.75); padding:12px 30px; border-radius:12px; font-weight:800; font-size:1.6rem; color:white; border-bottom:4px solid rgba(255,255,255,.2); }
+    #timer-box { font-size:2rem; padding:15px 40px; border-bottom-color:#ff9800; }
+    .action-btn { margin-top:30px; padding:20px 50px; font-size:1.5rem; font-weight:bold; color:white; background:#4caf50; border:0; border-radius:12px; cursor:pointer; text-transform:uppercase; box-shadow:0 5px 15px rgba(76,175,80,.4); }
+    .action-btn:hover { transform:translateY(-3px); }
+    .error-msg { color:#ff6b6b; margin-top:20px; font-weight:bold; font-size:1.05rem; max-width:850px; line-height:1.4; }
+    #loading-screen, #game-over-screen { display:none; }
+    #game-over-screen h1 { font-size:5rem; margin:0; color:#f44336; }
+    #game-over-screen p { font-size:2rem; margin:10px 0; }
+  </style>
 </head>
 <body>
-    <div id="game-container">
-        <!-- Video element MUST have autoplay and playsinline -->
-        <video id="webcam" autoplay playsinline muted></video>
-        <canvas id="gameCanvas" width="1280" height="720"></canvas>
+  <div id="game-container">
+    <video id="webcam" autoplay playsinline muted></video>
+    <canvas id="gameCanvas"></canvas>
 
-        <div id="ui-overlay" style="display: none;">
-            <div class="ui-box">SCORE: <span id="score">0</span></div>
-            <div id="timer-box" class="ui-box">TIME: <span id="time">120</span></div>
-            <div class="ui-box">STREAK: <span id="streak">0</span></div>
-        </div>
-
-        <div id="start-screen" class="overlay-screen">
-            <h1 style="font-size: 3rem; margin-bottom: 10px;">GOALKEEPER CHALLENGE</h1>
-            <p style="font-size: 1.5rem;">Defend the goal with your body for 2 minutes!</p>
-            <button id="start-btn" class="action-btn">Start Camera & Play</button>
-            <div id="start-error" class="error-msg"></div>
-        </div>
-
-        <div id="loading-screen" class="overlay-screen">
-            <h2>Warming up AI...</h2>
-            <p>Please stand back so the camera can see you.</p>
-            <div id="loading-error" class="error-msg"></div>
-        </div>
-
-        <div id="game-over-screen" class="overlay-screen">
-            <h1>Game Over</h1>
-            <p>Final Score: <span id="final-score">0</span></p>
-            <p>Best Streak: <span id="final-streak">0</span></p>
-            <button id="play-again-btn" class="action-btn">Play Again</button>
-        </div>
+    <div id="ui-overlay">
+      <div class="ui-box">SCORE: <span id="score">0</span></div>
+      <div id="timer-box" class="ui-box">TIME: <span id="time">120</span></div>
+      <div class="ui-box">STREAK: <span id="streak">0</span></div>
     </div>
 
+    <div id="start-screen" class="overlay-screen">
+      <h1 style="font-size:3rem;margin-bottom:10px;">GOALKEEPER CHALLENGE</h1>
+      <p style="font-size:1.5rem;">Defend the goal with your body for 2 minutes!</p>
+      <button id="start-btn" class="action-btn">Grant Camera & Play</button>
+      <div id="start-error" class="error-msg"></div>
+    </div>
+
+    <div id="loading-screen" class="overlay-screen">
+      <h2>Warming up AI...</h2>
+      <p>Please stand back so the camera can see you.</p>
+      <div id="loading-error" class="error-msg"></div>
+    </div>
+
+    <div id="game-over-screen" class="overlay-screen">
+      <h1>Game Over</h1>
+      <p>Final Score: <span id="final-score">0</span></p>
+      <p>Best Streak: <span id="final-streak">0</span></p>
+      <button id="play-again-btn" class="action-btn">Play Again</button>
+    </div>
+  </div>
+
 <script>
-    // 1. Get HTML Elements
-    const videoElement = document.getElementById('webcam');
-    const canvasElement = document.getElementById('gameCanvas');
-    const canvasCtx = canvasElement.getContext('2d');
-    
-    // Create offscreen canvas for processing the player cutout
-    const offscreenCanvas = document.createElement('canvas');
-    offscreenCanvas.width = 1280;
-    offscreenCanvas.height = 720;
-    const offscreenCtx = offscreenCanvas.getContext('2d');
+const video = document.getElementById('webcam');
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
 
-    const ui = {
-        score: document.getElementById('score'),
-        streak: document.getElementById('streak'),
-        time: document.getElementById('time'),
-        timerBox: document.getElementById('timer-box'),
-        startScreen: document.getElementById('start-screen'),
-        loadingScreen: document.getElementById('loading-screen'),
-        gameOverScreen: document.getElementById('game-over-screen'),
-        uiOverlay: document.getElementById('ui-overlay'),
-        finalScore: document.getElementById('final-score'),
-        finalStreak: document.getElementById('final-streak'),
-        startBtn: document.getElementById('start-btn'),
-        playAgainBtn: document.getElementById('play-again-btn'),
-        startError: document.getElementById('start-error'),
-        loadingError: document.getElementById('loading-error')
-    };
+const ui = {
+  score: document.getElementById('score'), streak: document.getElementById('streak'), time: document.getElementById('time'),
+  startScreen: document.getElementById('start-screen'), loadingScreen: document.getElementById('loading-screen'), gameOver: document.getElementById('game-over-screen'),
+  finalScore: document.getElementById('final-score'), finalStreak: document.getElementById('final-streak'),
+  startBtn: document.getElementById('start-btn'), playAgainBtn: document.getElementById('play-again-btn'),
+  startError: document.getElementById('start-error'), loadingError: document.getElementById('loading-error')
+};
 
-    // 2. Game State
-    let state = {
-        score: 0, streak: 0, bestStreak: 0, timeLeft: 120,
-        gameStatus: 'idle', // idle, loading, playing, over
-        contactPoints: {},
-        playerCutout: null,
-        particles: [],
-        gameTimer: null,
-        isBallActive: false
-    };
+let pose, stream, animationId, timerId;
+let latestLandmarks = null;
+let status = 'idle';
+let score = 0, streak = 0, bestStreak = 0, timeLeft = 120;
+let ball = { x: 1100, y: 360, r: 26, vx: -8, vy: 0, active: false };
+let lastPoseSend = 0;
 
-    let ball = {};
+function resizeCanvas() {
+  canvas.width = 1280;
+  canvas.height = 720;
+}
+resizeCanvas();
 
-    // 3. Load Images
-    const bgImg = new Image();
-    bgImg.src = 'soccerfifabg.png';
+function showOnly(screen) {
+  ui.startScreen.style.display = screen === 'start' ? 'flex' : 'none';
+  ui.loadingScreen.style.display = screen === 'loading' ? 'flex' : 'none';
+  ui.gameOver.style.display = screen === 'over' ? 'flex' : 'none';
+}
 
-    const ballImg = new Image();
-    // SVG Data URI for the soccer ball
-    ballImg.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="48" fill="%23fff" stroke="%23000" stroke-width="3"/><polygon points="50,22 25,40 35,70 65,70 75,40" fill="%23222"/><line x1="50" y1="22" x2="50" y2="2" stroke="%23222" stroke-width="4"/><line x1="25" y1="40" x2="4" y2="30" stroke="%23222" stroke-width="4"/><line x1="75" y1="40" x2="96" y2="30" stroke="%23222" stroke-width="4"/><line x1="35" y1="70" x2="20" y2="92" stroke="%23222" stroke-width="4"/><line x1="65" y1="70" x2="80" y2="92" stroke="%23222" stroke-width="4"/><polygon points="50,2 35,0 65,0" fill="%23222"/><polygon points="4,30 0,45 0,15" fill="%23222"/><polygon points="96,30 100,45 100,15" fill="%23222"/><polygon points="20,92 10,100 40,100" fill="%23222"/><polygon points="80,92 90,100 60,100" fill="%23222"/></svg>';
+function cameraErrorMessage(err) {
+  const base = err && err.name ? err.name : 'Camera error';
+  if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+    return `${base}: Camera access requires HTTPS. Publish with GitHub Pages using https://, not a local/file link.`;
+  }
+  if (base === 'NotAllowedError' || base === 'PermissionDeniedError') return 'Camera permission was blocked. Click the lock/camera icon in Chrome address bar, allow Camera, then refresh.';
+  if (base === 'NotFoundError' || base === 'DevicesNotFoundError') return 'No camera was found. Make sure the webcam/OBS Virtual Camera is connected and available.';
+  if (base === 'NotReadableError' || base === 'TrackStartError') return 'The camera is already being used by another app. Close Zoom/OBS/Teams/other browser tabs, then refresh.';
+  return `${base}: ${err.message || 'Unable to start camera.'}`;
+}
 
-    // 4. Game Logic Functions
-    function spawnBall() {
-        if (state.gameStatus !== 'playing') return;
-        state.isBallActive = true;
-        ball = {
-            state: 'incoming', 
-            radius: 5, // start small
-            x: 640 + (Math.random() - 0.5) * 300, // Center +/- 150px
-            y: 400, // Horizon line of the background
-            speedX: (Math.random() - 0.5) * 12,
-            speedY: (4.5 + Math.random() * 2) * (state.timeLeft < 60 ? 1.5 : 1), // Faster in last minute
-            sizeGrowth: 0.15, 
-            rotation: 0
-        };
-    }
+async function startCamera() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('getUserMedia is not supported in this browser. Use Chrome or Edge.');
+  stream = await navigator.mediaDevices.getUserMedia({
+    video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+    audio: false
+  });
+  video.srcObject = stream;
+  await video.play();
+  await new Promise(resolve => {
+    if (video.readyState >= 2) resolve();
+    else video.onloadedmetadata = resolve;
+  });
+}
 
-    function updateGamePhysics() {
-        if (state.gameStatus !== 'playing') return;
+async function setupPose() {
+  pose = new Pose({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
+  pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+  pose.onResults(results => { latestLandmarks = results.poseLandmarks || null; });
+}
 
-        // If no ball, spawn one after a delay
-        if (!state.isBallActive) {
-            state.isBallActive = true; // prevent multiple spawns
-            setTimeout(spawnBall, 1200);
-            return;
-        }
+async function startGame() {
+  ui.startError.textContent = '';
+  ui.loadingError.textContent = '';
+  showOnly('loading');
+  status = 'loading';
+  try {
+    await startCamera();
+    await setupPose();
+    resetGame();
+    showOnly(null);
+    status = 'playing';
+    gameLoop();
+    timerId = setInterval(tickTimer, 1000);
+  } catch (err) {
+    console.error(err);
+    status = 'idle';
+    showOnly('start');
+    ui.startError.textContent = cameraErrorMessage(err);
+  }
+}
 
-        if (!ball.state) return;
+function resetGame() {
+  score = 0; streak = 0; bestStreak = 0; timeLeft = 120;
+  ui.score.textContent = score; ui.streak.textContent = streak; ui.time.textContent = timeLeft;
+  spawnBall();
+}
 
-        if (ball.state === 'incoming') {
-            ball.x += ball.speedX;
-            ball.y += ball.speedY;
-            ball.radius += ball.sizeGrowth * ball.speedY;
-            ball.rotation += ball.speedY * 0.05;
+function tickTimer() {
+  if (status !== 'playing') return;
+  timeLeft--;
+  ui.time.textContent = timeLeft;
+  if (timeLeft <= 0) endGame();
+}
 
-            // Collision Detection
-            let saved = false;
-            let hitX = 0;
-            let hitY = 0;
+function spawnBall() {
+  const side = Math.random() < 0.5 ? 'left' : 'right';
+  ball.r = 24 + Math.random() * 10;
+  ball.x = side === 'left' ? -40 : 1320;
+  ball.y = 150 + Math.random() * 420;
+  ball.vx = side === 'left' ? 6 + Math.random() * 4 : -6 - Math.random() * 4;
+  ball.vy = (Math.random() - 0.5) * 3;
+  ball.active = true;
+}
 
-            for (const part in state.contactPoints) {
-                const pt = state.contactPoints[part];
-                if (pt && pt.x && pt.y) {
-                    const dist = Math.hypot(ball.x - pt.x, ball.y - pt.y);
-                    // Hitbox: ball radius + 40px buffer
-                    if (dist < ball.radius + 40) {
-                        saved = true;
-                        hitX = pt.x;
-                        hitY = pt.y;
-                        break;
-                    }
-                }
-            }
+function getBodyPoints() {
+  if (!latestLandmarks) return [];
+  return latestLandmarks
+    .filter(p => p.visibility === undefined || p.visibility > 0.45)
+    .map(p => ({ x: (1 - p.x) * canvas.width, y: p.y * canvas.height }));
+}
 
-            if (saved) {
-                // Ball was blocked!
-                ball.state = 'deflected';
-                // Reverse Y direction (bounce up), reduce speed
-                ball.speedY = -(ball.speedY * 0.6); 
-                // Add some X velocity based on where it hit relative to the center of the ball
-                ball.speedX += (ball.x - hitX) * 0.1; 
-                
-                state.score += 10 + (state.streak * 2);
-                state.streak++;
-                if (state.streak > state.bestStreak) state.bestStreak = state.streak;
-                triggerFx("#4caf50"); // Green flash
-            } else if (ball.y > 720 + ball.radius) {
-                // Ball passed the screen (Goal)
-                state.streak = 0;
-                triggerFx("#f44336"); // Red flash
-                state.isBallActive = false; // Trigger respawn
-                ball = {};
-            }
-        } else if (ball.state === 'deflected') {
-            // Ball is flying away
-            ball.x += ball.speedX;
-            ball.y += ball.speedY;
-            // Shrink the ball as it flies away
-            ball.radius -= ball.sizeGrowth * Math.abs(ball.speedY) * 1.5; 
-            ball.rotation -= ball.speedY * 0.05;
+function checkCollision(points) {
+  for (const p of points) {
+    const d = Math.hypot(p.x - ball.x, p.y - ball.y);
+    if (d < ball.r + 42) return true;
+  }
+  return false;
+}
 
-            // Remove ball when it gets too small or goes off top of screen
-            if (ball.radius < 2 || ball.y < 0) {
-                state.isBallActive = false; // Trigger respawn
-                ball = {};
-            }
-        }
-        updateUI();
-    }
+function updateGame() {
+  ball.x += ball.vx;
+  ball.y += ball.vy;
+  if (ball.y < 70 || ball.y > 650) ball.vy *= -1;
+  const points = getBodyPoints();
+  if (checkCollision(points)) {
+    score += 10; streak += 1; bestStreak = Math.max(bestStreak, streak);
+    ui.score.textContent = score; ui.streak.textContent = streak;
+    spawnBall();
+  }
+  if (ball.x < -80 || ball.x > 1360) {
+    streak = 0; ui.streak.textContent = streak;
+    spawnBall();
+  }
+}
 
-    function drawFrame() {
-        // Clear main canvas
-        canvasCtx.clearRect(0, 0, 1280, 720);
-        
-        // 1. Draw Background
-        if (bgImg.complete) {
-            canvasCtx.drawImage(bgImg, 0, 0, 1280, 720);
-        }
-        
-        // 2. Draw Player Cutout (Mirrored)
-        if (state.playerCutout) {
-            canvasCtx.save();
-            canvasCtx.scale(-1, 1);
-            canvasCtx.translate(-1280, 0);
-            canvasCtx.drawImage(state.playerCutout, 0, 0, 1280, 720);
-            canvasCtx.restore();
-        }
-        
-        // 3. Draw Ball
-        if (ball.state) {
-            canvasCtx.save();
-            canvasCtx.translate(ball.x, ball.y);
-            canvasCtx.rotate(ball.rotation);
-            canvasCtx.drawImage(ballImg, -ball.radius, -ball.radius, ball.radius * 2, ball.radius * 2);
-            canvasCtx.restore();
-        }
+function drawBackground() {
+  ctx.fillStyle = '#0b5f35'; ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle = 'rgba(255,255,255,.15)';
+  ctx.fillRect(70,120,1140,480); ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = 8; ctx.strokeRect(70,120,1140,480);
+  ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fillRect(0,0,canvas.width,canvas.height);
+}
 
-        // Loop the drawing and physics
-        if(state.gameStatus === 'playing') {
-            updateGamePhysics();
-        }
-        requestAnimationFrame(drawFrame);
-    }
+function drawPose(points) {
+  ctx.fillStyle = 'rgba(0, 210, 255, .9)';
+  points.forEach(p => { ctx.beginPath(); ctx.arc(p.x, p.y, 10, 0, Math.PI*2); ctx.fill(); });
+}
 
-    // --- MediaPipe AI Logic ---
-    function onResults(results) {
-        // If we get here, the camera and AI are working!
-        if (state.gameStatus === 'loading') {
-            beginGameplay();
-        }
-        
-        // Create the player cutout image
-        offscreenCtx.clearRect(0, 0, 1280, 720);
-        if (results.segmentationMask) {
-            offscreenCtx.drawImage(results.segmentationMask, 0, 0, 1280, 720);
-            offscreenCtx.globalCompositeOperation = 'source-in';
-        }
-        offscreenCtx.drawImage(results.image, 0, 0, 1280, 720);
-        offscreenCtx.globalCompositeOperation = 'source-over'; // Reset
-        state.playerCutout = offscreenCanvas;
+function drawBall() {
+  ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill();
+  ctx.lineWidth = 3; ctx.strokeStyle = '#111'; ctx.stroke();
+  ctx.fillStyle = '#111'; ctx.font = `${ball.r}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('⚽', ball.x, ball.y + 1);
+}
 
-        // Extract tracking points (Mirrored X coordinate)
-        if (results.poseLandmarks) {
-            const getCoords = (index) => {
-                const lm = results.poseLandmarks[index];
-                // Mirror the X coordinate so it matches the flipped canvas drawing
-                return { x: (1 - lm.x) * 1280, y: lm.y * 720 };
-            };
-            
-            state.contactPoints = {
-                left_wrist: getCoords(15), right_wrist: getCoords(16), 
-                left_elbow: getCoords(13), right_elbow: getCoords(14), 
-                left_shoulder: getCoords(11), right_shoulder: getCoords(12),
-                head: getCoords(0), 
-                left_knee: getCoords(25), right_knee: getCoords(26),
-                left_foot: getCoords(31), right_foot: getCoords(32)
-            };
-        }
-    }
+async function gameLoop(now = 0) {
+  if (status !== 'playing') return;
+  animationId = requestAnimationFrame(gameLoop);
+  if (pose && video.readyState >= 2 && now - lastPoseSend > 33) {
+    lastPoseSend = now;
+    try { await pose.send({ image: video }); } catch (err) { console.warn('Pose frame skipped', err); }
+  }
+  updateGame();
+  drawBackground();
+  drawPose(getBodyPoints());
+  drawBall();
+}
 
-    // --- Flow Control Functions ---
-    function triggerFx(color) {
-        document.getElementById('game-container').style.outline = `8px solid ${color}`;
-        setTimeout(() => document.getElementById('game-container').style.outline = 'none', 200);
-    }
-    
-    function updateUI() {
-        ui.score.innerText = state.score;
-        ui.streak.innerText = state.streak;
-    }
+function endGame() {
+  status = 'over';
+  clearInterval(timerId);
+  cancelAnimationFrame(animationId);
+  ui.finalScore.textContent = score;
+  ui.finalStreak.textContent = bestStreak;
+  showOnly('over');
+}
 
-    function beginGameplay() {
-        state.gameStatus = 'playing';
-        ui.loadingScreen.style.display = 'none';
-        ui.uiOverlay.style.display = 'flex';
-        
-        state.score = 0; state.streak = 0; state.bestStreak = 0; state.timeLeft = 120;
-        state.isBallActive = false;
-        ball = {};
-        
-        ui.time.innerText = state.timeLeft;
-        ui.timerBox.style.borderColor = '#ff9800';
+function restartGame() {
+  showOnly(null);
+  resetGame();
+  status = 'playing';
+  gameLoop();
+  clearInterval(timerId);
+  timerId = setInterval(tickTimer, 1000);
+}
 
-        if (state.gameTimer) clearInterval(state.gameTimer);
-        state.gameTimer = setInterval(() => {
-            state.timeLeft--;
-            ui.time.innerText = state.timeLeft;
-            if (state.timeLeft < 60 && state.timeLeft > 10) ui.timerBox.style.borderColor = '#fdd835';
-            else if (state.timeLeft <= 10) ui.timerBox.style.borderColor = '#e53935';
-            
-            if (state.timeLeft <= 0) endGame();
-        }, 1000);
-    }
-
-    function endGame() {
-        clearInterval(state.gameTimer);
-        state.gameStatus = 'over';
-        state.isBallActive = false;
-        ball = {};
-        ui.uiOverlay.style.display = 'none';
-        ui.finalScore.innerText = state.score;
-        ui.finalStreak.innerText = state.bestStreak;
-        ui.gameOver.style.display = 'flex';
-    }
-
-    async function initializeSystem() {
-        ui.startScreen.style.display = 'none';
-        ui.loadingScreen.style.display = 'flex';
-        ui.loadingError.innerText = "";
-
-        try {
-            // Initialize MediaPipe Pose
-            const pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
-            pose.setOptions({
-                modelComplexity: 1, 
-                smoothLandmarks: true, 
-                enableSegmentation: true,
-                smoothSegmentation: true, 
-                minDetectionConfidence: 0.5, 
-                minTrackingConfidence: 0.5
-            });
-            pose.onResults(onResults);
-
-            // Initialize Camera
-            const camera = new Camera(videoElement, {
-                onFrame: async () => {
-                    await pose.send({ image: videoElement });
-                },
-                width: 1280, height: 720
-            });
-            
-            state.gameStatus = 'loading';
-            await camera.start();
-            
-            // Start the visual render loop immediately
-            requestAnimationFrame(drawFrame);
-
-        } catch (error) {
-            console.error(error);
-            ui.loadingScreen.style.display = 'none';
-            ui.startScreen.style.display = 'flex';
-            ui.startError.innerText = "Error starting camera: " + error.message + ". Please ensure you have a webcam connected and allow permissions.";
-        }
-    }
-
-    // 1. Kick off the visual loop right away so the background draws
-    function drawFrame() {
-        drawGame();
-        requestAnimationFrame(drawFrame);
-    }
-    requestAnimationFrame(drawFrame);
-
-    // 2. Attach button listener
-    ui.startBtn.addEventListener('click', initializeSystem);
-    ui.playAgainBtn.addEventListener('click', () => {
-        ui.gameOver.style.display = 'none';
-        ui.loadingScreen.style.display = 'flex';
-        state.gameStatus = 'loading';
-        // The onResults function will automatically trigger beginGameplay() 
-        // once it processes the next frame.
-    });
-
+ui.startBtn.addEventListener('click', startGame);
+ui.playAgainBtn.addEventListener('click', restartGame);
 </script>
 </body>
 </html>
