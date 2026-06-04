@@ -1,248 +1,375 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Goalkeeper Challenge - Camera Fixed</title>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
-  <style>
-    body { margin:0; padding:0; background:#111; font-family:Segoe UI,Tahoma,sans-serif; overflow:hidden; display:flex; justify-content:center; align-items:center; height:100vh; }
-    #game-container { position:relative; width:1280px; height:720px; border-radius:12px; overflow:hidden; box-shadow:0 20px 50px rgba(0,0,0,.8); background:#000; }
-    #webcam { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; transform:scaleX(-1); z-index:1; }
-    #gameCanvas { position:absolute; inset:0; width:100%; height:100%; z-index:2; }
-    .overlay-screen { position:absolute; inset:0; z-index:20; color:white; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; background:rgba(0,0,0,.86); backdrop-filter:blur(8px); padding:30px; }
-    #ui-overlay { position:absolute; top:0; left:0; right:0; z-index:10; display:flex; justify-content:space-around; padding-top:20px; pointer-events:none; }
-    .ui-box { background:rgba(0,0,0,.75); padding:12px 30px; border-radius:12px; font-weight:800; font-size:1.6rem; color:white; border-bottom:4px solid rgba(255,255,255,.2); }
-    #timer-box { font-size:2rem; padding:15px 40px; border-bottom-color:#ff9800; }
-    .action-btn { margin-top:30px; padding:20px 50px; font-size:1.5rem; font-weight:bold; color:white; background:#4caf50; border:0; border-radius:12px; cursor:pointer; text-transform:uppercase; box-shadow:0 5px 15px rgba(76,175,80,.4); }
-    .action-btn:hover { transform:translateY(-3px); }
-    .error-msg { color:#ff6b6b; margin-top:20px; font-weight:bold; font-size:1.05rem; max-width:850px; line-height:1.4; }
-    #loading-screen, #game-over-screen { display:none; }
-    #game-over-screen h1 { font-size:5rem; margin:0; color:#f44336; }
-    #game-over-screen p { font-size:2rem; margin:10px 0; }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pro Goalkeeper Challenge</title>
+    <!-- Load MediaPipe AI Models -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+    
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #111; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden; }
+        
+        #game-container {
+            position: relative; width: 100vw; height: 100vh;
+            background-color: #333;
+            background-image: url('soccerfifabg.png'); /* YOUR BACKGROUND IMAGE */
+            background-size: cover; background-position: center;
+        }
+
+        /* The actual webcam feed is hidden, we only use it for data */
+        #webcam { display: none; }
+        
+        /* The canvas where we draw the game */
+        #gameCanvas {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2;
+        }
+
+        /* UI Overlays */
+        .overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            background: rgba(0,0,0,0.85); z-index: 20; color: white; text-align: center;
+        }
+        #hud {
+            position: absolute; top: 20px; left: 0; width: 100%; z-index: 10;
+            display: flex; justify-content: space-around; pointer-events: none;
+        }
+        .hud-box {
+            background: rgba(0, 0, 0, 0.7); padding: 10px 25px; border-radius: 8px;
+            font-size: 1.8rem; font-weight: bold; color: white; border-bottom: 4px solid #fff;
+        }
+        #timer-box { border-color: #ff9800; }
+        
+        button {
+            padding: 15px 40px; font-size: 1.5rem; font-weight: bold; color: white;
+            background: #4caf50; border: none; border-radius: 8px; cursor: pointer;
+            box-shadow: 0 4px 10px rgba(76, 175, 80, 0.4); transition: 0.2s;
+        }
+        button:hover { background: #45a049; transform: scale(1.05); }
+
+        #debug-log { color: #ff5252; margin-top: 20px; font-weight: bold; max-width: 80%; }
+        
+        .hidden { display: none !important; }
+    </style>
 </head>
 <body>
-  <div id="game-container">
-    <video id="webcam" autoplay playsinline muted></video>
-    <canvas id="gameCanvas"></canvas>
 
-    <div id="ui-overlay">
-      <div class="ui-box">SCORE: <span id="score">0</span></div>
-      <div id="timer-box" class="ui-box">TIME: <span id="time">120</span></div>
-      <div class="ui-box">STREAK: <span id="streak">0</span></div>
-    </div>
+    <div id="game-container">
+        <video id="webcam" autoplay playsinline muted></video>
+        <canvas id="gameCanvas"></canvas>
 
-    <div id="start-screen" class="overlay-screen">
-      <h1 style="font-size:3rem;margin-bottom:10px;">GOALKEEPER CHALLENGE</h1>
-      <p style="font-size:1.5rem;">Defend the goal with your body for 2 minutes!</p>
-      <button id="start-btn" class="action-btn">Grant Camera & Play</button>
-      <div id="start-error" class="error-msg"></div>
-    </div>
+        <!-- Heads Up Display -->
+        <div id="hud" class="hidden">
+            <div class="hud-box">SCORE: <span id="ui-score" style="color:#4caf50;">0</span></div>
+            <div id="timer-box" class="hud-box">TIME: <span id="ui-time">120</span></div>
+            <div class="hud-box">MISSED: <span id="ui-missed" style="color:#f44336;">0</span></div>
+        </div>
 
-    <div id="loading-screen" class="overlay-screen">
-      <h2>Warming up AI...</h2>
-      <p>Please stand back so the camera can see you.</p>
-      <div id="loading-error" class="error-msg"></div>
-    </div>
+        <!-- Start Screen -->
+        <div id="screen-start" class="overlay">
+            <h1 style="font-size: 4rem; margin:0;">GOALKEEPER</h1>
+            <p style="font-size: 1.5rem;">Block the balls with your body. You have 2 minutes.</p>
+            <button id="btn-start">Allow Camera & Play</button>
+            <p id="debug-log"></p>
+        </div>
 
-    <div id="game-over-screen" class="overlay-screen">
-      <h1>Game Over</h1>
-      <p>Final Score: <span id="final-score">0</span></p>
-      <p>Best Streak: <span id="final-streak">0</span></p>
-      <button id="play-again-btn" class="action-btn">Play Again</button>
+        <!-- Loading Screen -->
+        <div id="screen-loading" class="overlay hidden">
+            <h2>Warming up AI...</h2>
+            <p>Please stand back so the camera can see your whole body.</p>
+        </div>
+
+        <!-- Game Over Screen -->
+        <div id="screen-gameover" class="overlay hidden">
+            <h1 style="color: #f44336; font-size: 4rem; margin:0;">MATCH OVER</h1>
+            <h2>Final Score: <span id="final-score">0</span></h2>
+            <h2>Goals Missed: <span id="final-missed">0</span></h2>
+            <button id="btn-restart" style="margin-top:20px;">Play Again</button>
+        </div>
     </div>
-  </div>
 
 <script>
-const video = document.getElementById('webcam');
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
+    // --- System Variables ---
+    const video = document.getElementById('webcam');
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const debugLog = document.getElementById('debug-log');
+    
+    // Screens
+    const screenStart = document.getElementById('screen-start');
+    const screenLoading = document.getElementById('screen-loading');
+    const screenGameOver = document.getElementById('screen-gameover');
+    const hud = document.getElementById('hud');
 
-const ui = {
-  score: document.getElementById('score'), streak: document.getElementById('streak'), time: document.getElementById('time'),
-  startScreen: document.getElementById('start-screen'), loadingScreen: document.getElementById('loading-screen'), gameOver: document.getElementById('game-over-screen'),
-  finalScore: document.getElementById('final-score'), finalStreak: document.getElementById('final-streak'),
-  startBtn: document.getElementById('start-btn'), playAgainBtn: document.getElementById('play-again-btn'),
-  startError: document.getElementById('start-error'), loadingError: document.getElementById('loading-error')
-};
+    // UI Elements
+    const uiScore = document.getElementById('ui-score');
+    const uiTime = document.getElementById('ui-time');
+    const uiMissed = document.getElementById('ui-missed');
 
-let pose, stream, animationId, timerId;
-let latestLandmarks = null;
-let status = 'idle';
-let score = 0, streak = 0, bestStreak = 0, timeLeft = 120;
-let ball = { x: 1100, y: 360, r: 26, vx: -8, vy: 0, active: false };
-let lastPoseSend = 0;
+    // Offscreen canvas for AI player masking
+    const maskCanvas = document.createElement('canvas');
+    const maskCtx = maskCanvas.getContext('2d');
 
-function resizeCanvas() {
-  canvas.width = 1280;
-  canvas.height = 720;
-}
-resizeCanvas();
+    // Generate Soccer Ball Image
+    const ballImg = new Image();
+    ballImg.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="48" fill="%23fff" stroke="%23000" stroke-width="4"/><path d="M50 20 L30 40 L40 70 L60 70 L70 40 Z" fill="%23111"/><line x1="50" y1="20" x2="50" y2="2" stroke="%23111" stroke-width="5"/><line x1="30" y1="40" x2="5" y2="30" stroke="%23111" stroke-width="5"/><line x1="70" y1="40" x2="95" y2="30" stroke="%23111" stroke-width="5"/><line x1="40" y1="70" x2="25" y2="95" stroke="%23111" stroke-width="5"/><line x1="60" y1="70" x2="75" y2="95" stroke="%23111" stroke-width="5"/></svg>';
 
-function showOnly(screen) {
-  ui.startScreen.style.display = screen === 'start' ? 'flex' : 'none';
-  ui.loadingScreen.style.display = screen === 'loading' ? 'flex' : 'none';
-  ui.gameOver.style.display = screen === 'over' ? 'flex' : 'none';
-}
+    // --- Game State ---
+    let state = {
+        status: 'start', // start, loading, playing, gameover
+        score: 0,
+        missed: 0,
+        timeLeft: 120,
+        timerInterval: null,
+        playerMask: null,
+        contactPoints: [] // Array of {x,y} representing body joints
+    };
 
-function cameraErrorMessage(err) {
-  const base = err && err.name ? err.name : 'Camera error';
-  if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-    return `${base}: Camera access requires HTTPS. Publish with GitHub Pages using https://, not a local/file link.`;
-  }
-  if (base === 'NotAllowedError' || base === 'PermissionDeniedError') return 'Camera permission was blocked. Click the lock/camera icon in Chrome address bar, allow Camera, then refresh.';
-  if (base === 'NotFoundError' || base === 'DevicesNotFoundError') return 'No camera was found. Make sure the webcam/OBS Virtual Camera is connected and available.';
-  if (base === 'NotReadableError' || base === 'TrackStartError') return 'The camera is already being used by another app. Close Zoom/OBS/Teams/other browser tabs, then refresh.';
-  return `${base}: ${err.message || 'Unable to start camera.'}`;
-}
+    let ball = {
+        active: false,
+        phase: 'none', // incoming, bouncing
+        x: 0, y: 0, 
+        radius: 5,
+        speedX: 0, speedY: 0,
+        growth: 0, rotation: 0
+    };
 
-async function startCamera() {
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('getUserMedia is not supported in this browser. Use Chrome or Edge.');
-  stream = await navigator.mediaDevices.getUserMedia({
-    video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
-    audio: false
-  });
-  video.srcObject = stream;
-  await video.play();
-  await new Promise(resolve => {
-    if (video.readyState >= 2) resolve();
-    else video.onloadedmetadata = resolve;
-  });
-}
+    function logError(msg) {
+        console.error(msg);
+        debugLog.innerText = msg;
+    }
 
-async function setupPose() {
-  pose = new Pose({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
-  pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
-  pose.onResults(results => { latestLandmarks = results.poseLandmarks || null; });
-}
+    // --- Core Game Logic ---
+    function spawnBall() {
+        if (state.status !== 'playing') return;
+        ball.active = true;
+        ball.phase = 'incoming';
+        ball.radius = 5; // Start small in the distance
+        // Spawn randomly near the center horizon
+        ball.x = (canvas.width / 2) + (Math.random() - 0.5) * 200;
+        ball.y = canvas.height * 0.45; // Horizon line
+        
+        ball.speedX = (Math.random() - 0.5) * 8; 
+        
+        // Difficulty scaling based on time left
+        let speedMult = state.timeLeft < 60 ? 1.5 : 1.0; 
+        ball.speedY = (4 + Math.random() * 3) * speedMult; 
+        
+        ball.growth = 0.15; // How fast it grows as it gets closer
+        ball.rotation = 0;
+    }
 
-async function startGame() {
-  ui.startError.textContent = '';
-  ui.loadingError.textContent = '';
-  showOnly('loading');
-  status = 'loading';
-  try {
-    await startCamera();
-    await setupPose();
-    resetGame();
-    showOnly(null);
-    status = 'playing';
-    gameLoop();
-    timerId = setInterval(tickTimer, 1000);
-  } catch (err) {
-    console.error(err);
-    status = 'idle';
-    showOnly('start');
-    ui.startError.textContent = cameraErrorMessage(err);
-  }
-}
+    function updatePhysics() {
+        if (state.status !== 'playing') return;
 
-function resetGame() {
-  score = 0; streak = 0; bestStreak = 0; timeLeft = 120;
-  ui.score.textContent = score; ui.streak.textContent = streak; ui.time.textContent = timeLeft;
-  spawnBall();
-}
+        // Auto-spawn ball if missing
+        if (!ball.active) {
+            ball.active = true;
+            setTimeout(spawnBall, 1000);
+            return;
+        }
 
-function tickTimer() {
-  if (status !== 'playing') return;
-  timeLeft--;
-  ui.time.textContent = timeLeft;
-  if (timeLeft <= 0) endGame();
-}
+        if (ball.phase === 'incoming') {
+            ball.x += ball.speedX;
+            ball.y += ball.speedY;
+            ball.radius += ball.growth * ball.speedY;
+            ball.rotation += 0.1;
 
-function spawnBall() {
-  const side = Math.random() < 0.5 ? 'left' : 'right';
-  ball.r = 24 + Math.random() * 10;
-  ball.x = side === 'left' ? -40 : 1320;
-  ball.y = 150 + Math.random() * 420;
-  ball.vx = side === 'left' ? 6 + Math.random() * 4 : -6 - Math.random() * 4;
-  ball.vy = (Math.random() - 0.5) * 3;
-  ball.active = true;
-}
+            // Collision Detection
+            let hit = false;
+            let hitX = 0;
+            
+            for (let i = 0; i < state.contactPoints.length; i++) {
+                let pt = state.contactPoints[i];
+                if (!pt) continue;
+                // Check distance between ball center and body part
+                let dist = Math.hypot(ball.x - pt.x, ball.y - pt.y);
+                if (dist < ball.radius + 30) { // 30px buffer so it feels fair
+                    hit = true;
+                    hitX = pt.x;
+                    break;
+                }
+            }
 
-function getBodyPoints() {
-  if (!latestLandmarks) return [];
-  return latestLandmarks
-    .filter(p => p.visibility === undefined || p.visibility > 0.45)
-    .map(p => ({ x: (1 - p.x) * canvas.width, y: p.y * canvas.height }));
-}
+            if (hit) {
+                // DEFLECT THE BALL!
+                ball.phase = 'bouncing';
+                ball.speedY = -(ball.speedY * 0.7); // Bounce up and back
+                ball.speedX = (ball.x - hitX) * 0.15; // Bounce left/right based on where it hit
+                
+                state.score += 10;
+                ui.score.innerText = state.score;
+            } 
+            // Missed the ball
+            else if (ball.y > canvas.height + ball.radius) {
+                state.missed += 1;
+                ui.missed.innerText = state.missed;
+                ball.active = false; // Trigger respawn
+            }
 
-function checkCollision(points) {
-  for (const p of points) {
-    const d = Math.hypot(p.x - ball.x, p.y - ball.y);
-    if (d < ball.r + 42) return true;
-  }
-  return false;
-}
+        } else if (ball.phase === 'bouncing') {
+            // Ball is flying back towards the goal
+            ball.x += ball.speedX;
+            ball.y += ball.speedY;
+            ball.radius -= ball.growth * Math.abs(ball.speedY); // Shrink as it goes away
+            ball.rotation -= 0.1;
 
-function updateGame() {
-  ball.x += ball.vx;
-  ball.y += ball.vy;
-  if (ball.y < 70 || ball.y > 650) ball.vy *= -1;
-  const points = getBodyPoints();
-  if (checkCollision(points)) {
-    score += 10; streak += 1; bestStreak = Math.max(bestStreak, streak);
-    ui.score.textContent = score; ui.streak.textContent = streak;
-    spawnBall();
-  }
-  if (ball.x < -80 || ball.x > 1360) {
-    streak = 0; ui.streak.textContent = streak;
-    spawnBall();
-  }
-}
+            // Remove when it gets too small (far away) or goes off screen
+            if (ball.radius < 2 || ball.y < 0 || ball.x < 0 || ball.x > canvas.width) {
+                ball.active = false; // Trigger respawn
+            }
+        }
+    }
 
-function drawBackground() {
-  ctx.fillStyle = '#0b5f35'; ctx.fillRect(0,0,canvas.width,canvas.height);
-  ctx.fillStyle = 'rgba(255,255,255,.15)';
-  ctx.fillRect(70,120,1140,480); ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = 8; ctx.strokeRect(70,120,1140,480);
-  ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fillRect(0,0,canvas.width,canvas.height);
-}
+    // --- Drawing Loop ---
+    function draw() {
+        // Match canvas internal resolution to actual screen size
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        maskCanvas.width = canvas.width;
+        maskCanvas.height = canvas.height;
 
-function drawPose(points) {
-  ctx.fillStyle = 'rgba(0, 210, 255, .9)';
-  points.forEach(p => { ctx.beginPath(); ctx.arc(p.x, p.y, 10, 0, Math.PI*2); ctx.fill(); });
-}
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-function drawBall() {
-  ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill();
-  ctx.lineWidth = 3; ctx.strokeStyle = '#111'; ctx.stroke();
-  ctx.fillStyle = '#111'; ctx.font = `${ball.r}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('⚽', ball.x, ball.y + 1);
-}
+        // 1. Draw Player Cutout
+        if (state.playerCutout && state.status === 'playing') {
+            ctx.drawImage(state.playerCutout, 0, 0, canvas.width, canvas.height);
+        }
 
-async function gameLoop(now = 0) {
-  if (status !== 'playing') return;
-  animationId = requestAnimationFrame(gameLoop);
-  if (pose && video.readyState >= 2 && now - lastPoseSend > 33) {
-    lastPoseSend = now;
-    try { await pose.send({ image: video }); } catch (err) { console.warn('Pose frame skipped', err); }
-  }
-  updateGame();
-  drawBackground();
-  drawPose(getBodyPoints());
-  drawBall();
-}
+        // 2. Draw Ball
+        if (ball.active && ball.phase !== 'none') {
+            ctx.save();
+            ctx.translate(ball.x, ball.y);
+            ctx.rotate(ball.rotation);
+            ctx.drawImage(ballImg, -ball.radius, -ball.radius, ball.radius * 2, ball.radius * 2);
+            ctx.restore();
+        }
 
-function endGame() {
-  status = 'over';
-  clearInterval(timerId);
-  cancelAnimationFrame(animationId);
-  ui.finalScore.textContent = score;
-  ui.finalStreak.textContent = bestStreak;
-  showOnly('over');
-}
+        if (state.status === 'playing') {
+            updatePhysics();
+        }
 
-function restartGame() {
-  showOnly(null);
-  resetGame();
-  status = 'playing';
-  gameLoop();
-  clearInterval(timerId);
-  timerId = setInterval(tickTimer, 1000);
-}
+        requestAnimationFrame(draw);
+    }
 
-ui.startBtn.addEventListener('click', startGame);
-ui.playAgainBtn.addEventListener('click', restartGame);
+    // --- MediaPipe AI Processing ---
+    function onPoseResults(results) {
+        // Transition from Loading to Playing on first successful frame
+        if (state.status === 'loading') {
+            state.status = 'playing';
+            screenLoading.classList.add('hidden');
+            hud.classList.remove('hidden');
+            startTimer();
+            spawnBall();
+        }
+
+        // Create player cutout (Background removal)
+        if (results.segmentationMask) {
+            offscreenCtx.save();
+            offscreenCtx.clearRect(0, 0, offscreenCanvas.width, offscreenCanvas.height);
+            
+            // MIRROR THE CANVAS so the player moves naturally like a mirror
+            offscreenCtx.translate(offscreenCanvas.width, 0);
+            offscreenCtx.scale(-1, 1);
+            
+            offscreenCtx.drawImage(results.segmentationMask, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+            offscreenCtx.globalCompositeOperation = 'source-in';
+            offscreenCtx.drawImage(results.image, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+            offscreenCtx.restore();
+            
+            state.playerCutout = offscreenCanvas;
+        }
+
+        // Map Body parts for collision
+        if (results.poseLandmarks) {
+            const w = canvas.width;
+            const h = canvas.height;
+            state.contactPoints = [];
+            
+            // We must mirror the X coordinate (1 - x) to match the mirrored canvas
+            const addPoint = (index) => {
+                let lm = results.poseLandmarks[index];
+                if (lm && lm.visibility > 0.5) {
+                    state.contactPoints.push({ x: (1 - lm.x) * w, y: lm.y * h });
+                }
+            };
+
+            // Head, shoulders, elbows, wrists, hips, knees, ankles
+            [0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 31, 32].forEach(addPoint);
+        }
+    }
+
+    // --- Game Timers & Flow ---
+    function startTimer() {
+        if (state.gameTimer) clearInterval(state.gameTimer);
+        state.gameTimer = setInterval(() => {
+            state.timeLeft--;
+            ui.time.innerText = state.timeLeft;
+            
+            if (state.timeLeft <= 0) {
+                clearInterval(state.gameTimer);
+                state.status = 'over';
+                hud.classList.add('hidden');
+                screenGameOver.classList.remove('hidden');
+                ui.finalScore.innerText = state.score;
+                ui.finalStreak.innerText = state.missed; // Showing missed on game over
+            }
+        }, 1000);
+    }
+
+    async function initSystem() {
+        screenStart.classList.add('hidden');
+        screenLoading.classList.remove('hidden');
+
+        try {
+            // Check Camera permissions first
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            videoElement.srcObject = stream;
+
+            const pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
+            pose.setOptions({
+                modelComplexity: 1, 
+                smoothLandmarks: true, 
+                enableSegmentation: true,
+                smoothSegmentation: true, 
+                minDetectionConfidence: 0.5, 
+                minTrackingConfidence: 0.5
+            });
+            pose.onResults(onPoseResults);
+
+            const camera = new Camera(videoElement, {
+                onFrame: async () => { await pose.send({ image: videoElement }); },
+                width: 1280, height: 720
+            });
+            
+            state.status = 'loading';
+            await camera.start();
+            
+        } catch (err) {
+            logError("Cannot access Camera. Please ensure you clicked 'Allow' in your browser URL bar. Error: " + err.message);
+            screenStart.classList.remove('hidden');
+            screenLoading.classList.add('hidden');
+        }
+    }
+
+    // --- Setup Listeners ---
+    ui.startBtn.addEventListener('click', initSystem);
+    
+    ui.playAgainBtn.addEventListener('click', () => {
+        screenGameOver.classList.add('hidden');
+        state.score = 0; state.missed = 0; state.timeLeft = 120;
+        ui.score.innerText = "0"; ui.missed.innerText = "0";
+        state.status = 'playing';
+        hud.classList.remove('hidden');
+        startTimer();
+        spawnBall();
+    });
+
+    // Start drawing loop immediately
+    requestAnimationFrame(drawGame);
+
 </script>
 </body>
 </html>
