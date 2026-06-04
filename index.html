@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pro Goalkeeper Challenge</title>
     <!-- Load MediaPipe AI Models -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
     
     <style>
@@ -49,7 +48,7 @@
         }
         button:hover { background: #45a049; transform: scale(1.05); }
 
-        #debug-log { color: #ff5252; margin-top: 20px; font-weight: bold; max-width: 80%; }
+        #debug-log { color: #ff5252; margin-top: 20px; font-weight: bold; max-width: 80%; font-family: monospace; white-space: pre-wrap;}
         
         .hidden { display: none !important; }
     </style>
@@ -57,6 +56,7 @@
 <body>
 
     <div id="game-container">
+        <!-- Native Video Element -->
         <video id="webcam" autoplay playsinline muted></video>
         <canvas id="gameCanvas"></canvas>
 
@@ -71,7 +71,7 @@
         <div id="screen-start" class="overlay">
             <h1 style="font-size: 4rem; margin:0;">GOALKEEPER</h1>
             <p style="font-size: 1.5rem;">Block the balls with your body. You have 2 minutes.</p>
-            <button id="btn-start">Allow Camera & Play</button>
+            <button id="btn-start">Grant Camera & Play</button>
             <p id="debug-log"></p>
         </div>
 
@@ -123,22 +123,23 @@
         missed: 0,
         timeLeft: 120,
         timerInterval: null,
-        playerMask: null,
-        contactPoints: [] // Array of {x,y} representing body joints
+        playerCutout: null,
+        contactPoints: [] 
     };
 
     let ball = {
-        active: false,
-        phase: 'none', // incoming, bouncing
-        x: 0, y: 0, 
-        radius: 5,
+        active: false, phase: 'none', 
+        x: 0, y: 0, radius: 5,
         speedX: 0, speedY: 0,
         growth: 0, rotation: 0
     };
 
+    let poseAI = null;
+
+    // --- Logger ---
     function logError(msg) {
         console.error(msg);
-        debugLog.innerText = msg;
+        debugLog.innerHTML += `<br>ERROR: ${msg}`;
     }
 
     // --- Core Game Logic ---
@@ -146,25 +147,21 @@
         if (state.status !== 'playing') return;
         ball.active = true;
         ball.phase = 'incoming';
-        ball.radius = 5; // Start small in the distance
-        // Spawn randomly near the center horizon
+        ball.radius = 5; 
+        
         ball.x = (canvas.width / 2) + (Math.random() - 0.5) * 200;
-        ball.y = canvas.height * 0.45; // Horizon line
+        ball.y = canvas.height * 0.45; 
         
         ball.speedX = (Math.random() - 0.5) * 8; 
-        
-        // Difficulty scaling based on time left
         let speedMult = state.timeLeft < 60 ? 1.5 : 1.0; 
         ball.speedY = (4 + Math.random() * 3) * speedMult; 
-        
-        ball.growth = 0.15; // How fast it grows as it gets closer
+        ball.growth = 0.15; 
         ball.rotation = 0;
     }
 
     function updatePhysics() {
         if (state.status !== 'playing') return;
 
-        // Auto-spawn ball if missing
         if (!ball.active) {
             ball.active = true;
             setTimeout(spawnBall, 1000);
@@ -177,16 +174,14 @@
             ball.radius += ball.growth * ball.speedY;
             ball.rotation += 0.1;
 
-            // Collision Detection
             let hit = false;
             let hitX = 0;
             
             for (let i = 0; i < state.contactPoints.length; i++) {
                 let pt = state.contactPoints[i];
                 if (!pt) continue;
-                // Check distance between ball center and body part
                 let dist = Math.hypot(ball.x - pt.x, ball.y - pt.y);
-                if (dist < ball.radius + 30) { // 30px buffer so it feels fair
+                if (dist < ball.radius + 40) { 
                     hit = true;
                     hitX = pt.x;
                     break;
@@ -194,38 +189,33 @@
             }
 
             if (hit) {
-                // DEFLECT THE BALL!
+                // DEFLECT PHYSICS! Bounce it away
                 ball.phase = 'bouncing';
-                ball.speedY = -(ball.speedY * 0.7); // Bounce up and back
-                ball.speedX = (ball.x - hitX) * 0.15; // Bounce left/right based on where it hit
-                
+                ball.speedY = -(ball.speedY * 0.7); 
+                ball.speedX = (ball.x - hitX) * 0.15; 
                 state.score += 10;
-                ui.score.innerText = state.score;
+                uiScore.innerText = state.score;
             } 
-            // Missed the ball
             else if (ball.y > canvas.height + ball.radius) {
                 state.missed += 1;
-                ui.missed.innerText = state.missed;
-                ball.active = false; // Trigger respawn
+                uiMissed.innerText = state.missed;
+                ball.active = false; 
             }
 
         } else if (ball.phase === 'bouncing') {
-            // Ball is flying back towards the goal
             ball.x += ball.speedX;
             ball.y += ball.speedY;
-            ball.radius -= ball.growth * Math.abs(ball.speedY); // Shrink as it goes away
+            ball.radius -= ball.growth * Math.abs(ball.speedY); 
             ball.rotation -= 0.1;
 
-            // Remove when it gets too small (far away) or goes off screen
             if (ball.radius < 2 || ball.y < 0 || ball.x < 0 || ball.x > canvas.width) {
-                ball.active = false; // Trigger respawn
+                ball.active = false; 
             }
         }
     }
 
     // --- Drawing Loop ---
     function draw() {
-        // Match canvas internal resolution to actual screen size
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
         maskCanvas.width = canvas.width;
@@ -233,12 +223,14 @@
 
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // 1. Draw Player Cutout
         if (state.playerCutout && state.status === 'playing') {
+            ctx.save();
+            ctx.translate(canvas.width, 0);
+            ctx.scale(-1, 1);
             ctx.drawImage(state.playerCutout, 0, 0, canvas.width, canvas.height);
+            ctx.restore();
         }
 
-        // 2. Draw Ball
         if (ball.active && ball.phase !== 'none') {
             ctx.save();
             ctx.translate(ball.x, ball.y);
@@ -256,7 +248,6 @@
 
     // --- MediaPipe AI Processing ---
     function onPoseResults(results) {
-        // Transition from Loading to Playing on first successful frame
         if (state.status === 'loading') {
             state.status = 'playing';
             screenLoading.classList.add('hidden');
@@ -265,71 +256,86 @@
             spawnBall();
         }
 
-        // Create player cutout (Background removal)
         if (results.segmentationMask) {
-            offscreenCtx.save();
-            offscreenCtx.clearRect(0, 0, offscreenCanvas.width, offscreenCanvas.height);
-            
-            // MIRROR THE CANVAS so the player moves naturally like a mirror
-            offscreenCtx.translate(offscreenCanvas.width, 0);
-            offscreenCtx.scale(-1, 1);
-            
-            offscreenCtx.drawImage(results.segmentationMask, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-            offscreenCtx.globalCompositeOperation = 'source-in';
-            offscreenCtx.drawImage(results.image, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-            offscreenCtx.restore();
-            
-            state.playerCutout = offscreenCanvas;
+            maskCtx.save();
+            maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+            maskCtx.drawImage(results.segmentationMask, 0, 0, maskCanvas.width, maskCanvas.height);
+            maskCtx.globalCompositeOperation = 'source-in';
+            maskCtx.drawImage(results.image, 0, 0, maskCanvas.width, maskCanvas.height);
+            maskCtx.restore();
+            state.playerCutout = maskCanvas;
         }
 
-        // Map Body parts for collision
         if (results.poseLandmarks) {
             const w = canvas.width;
             const h = canvas.height;
             state.contactPoints = [];
             
-            // We must mirror the X coordinate (1 - x) to match the mirrored canvas
             const addPoint = (index) => {
                 let lm = results.poseLandmarks[index];
                 if (lm && lm.visibility > 0.5) {
+                    // Coordinates inverted to match visual mirror
                     state.contactPoints.push({ x: (1 - lm.x) * w, y: lm.y * h });
                 }
             };
-
-            // Head, shoulders, elbows, wrists, hips, knees, ankles
             [0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 31, 32].forEach(addPoint);
         }
     }
 
-    // --- Game Timers & Flow ---
+    // --- Native Camera Loop ---
+    async function startCameraLoop() {
+        return new Promise((resolve) => {
+            video.addEventListener('loadeddata', () => {
+                const tick = async () => {
+                    if (state.status === 'playing' || state.status === 'loading') {
+                        try {
+                            await poseAI.send({ image: video });
+                        } catch (e) {
+                            console.warn("AI Frame Skip:", e);
+                        }
+                    }
+                    requestAnimationFrame(tick);
+                };
+                tick();
+                resolve();
+            });
+        });
+    }
+
+    // --- Flow Control Functions ---
     function startTimer() {
-        if (state.gameTimer) clearInterval(state.gameTimer);
-        state.gameTimer = setInterval(() => {
+        if (state.timerInterval) clearInterval(state.timerInterval);
+        state.timerInterval = setInterval(() => {
             state.timeLeft--;
-            ui.time.innerText = state.timeLeft;
+            uiTime.innerText = state.timeLeft;
             
             if (state.timeLeft <= 0) {
-                clearInterval(state.gameTimer);
+                clearInterval(state.timerInterval);
                 state.status = 'over';
                 hud.classList.add('hidden');
                 screenGameOver.classList.remove('hidden');
-                ui.finalScore.innerText = state.score;
-                ui.finalStreak.innerText = state.missed; // Showing missed on game over
+                document.getElementById('final-score').innerText = state.score;
+                document.getElementById('final-missed').innerText = state.missed;
             }
         }, 1000);
     }
 
     async function initSystem() {
-        screenStart.classList.add('hidden');
-        screenLoading.classList.remove('hidden');
-
+        debugLog.innerText = "Requesting camera access...";
+        
         try {
-            // Check Camera permissions first
-            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-            videoElement.srcObject = stream;
+            // 1. Native Camera Request
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { width: 1280, height: 720, facingMode: "user" } 
+            });
+            video.srcObject = stream;
+            
+            screenStart.classList.add('hidden');
+            screenLoading.classList.remove('hidden');
 
-            const pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
-            pose.setOptions({
+            // 2. Initialize MediaPipe
+            poseAI = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
+            poseAI.setOptions({
                 modelComplexity: 1, 
                 smoothLandmarks: true, 
                 enableSegmentation: true,
@@ -337,30 +343,23 @@
                 minDetectionConfidence: 0.5, 
                 minTrackingConfidence: 0.5
             });
-            pose.onResults(onPoseResults);
+            poseAI.onResults(onPoseResults);
 
-            const camera = new Camera(videoElement, {
-                onFrame: async () => { await pose.send({ image: videoElement }); },
-                width: 1280, height: 720
-            });
-            
-            state.status = 'loading';
-            await camera.start();
-            
+            // 3. Start processing loop
+            await startCameraLoop();
+
         } catch (err) {
-            logError("Cannot access Camera. Please ensure you clicked 'Allow' in your browser URL bar. Error: " + err.message);
-            screenStart.classList.remove('hidden');
-            screenLoading.classList.add('hidden');
+            logError(err.name + ": " + err.message);
         }
     }
 
     // --- Setup Listeners ---
-    ui.startBtn.addEventListener('click', initSystem);
+    document.getElementById('start-btn').addEventListener('click', initSystem);
     
-    ui.playAgainBtn.addEventListener('click', () => {
+    document.getElementById('play-again-btn').addEventListener('click', () => {
         screenGameOver.classList.add('hidden');
         state.score = 0; state.missed = 0; state.timeLeft = 120;
-        ui.score.innerText = "0"; ui.missed.innerText = "0";
+        uiScore.innerText = "0"; uiMissed.innerText = "0";
         state.status = 'playing';
         hud.classList.remove('hidden');
         startTimer();
@@ -368,7 +367,7 @@
     });
 
     // Start drawing loop immediately
-    requestAnimationFrame(drawGame);
+    requestAnimationFrame(draw);
 
 </script>
 </body>
